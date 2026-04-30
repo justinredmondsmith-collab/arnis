@@ -207,9 +207,6 @@ fn is_pedestrian_way(element: &ProcessedElement) -> bool {
 /// Type alias for highway connectivity map
 pub type HighwayConnectivityMap = HashMap<(i32, i32), Vec<i32>>;
 
-/// Minimum terrain dip (in blocks) below max endpoint elevation to classify a bridge as valley-spanning
-const VALLEY_BRIDGE_THRESHOLD: i32 = 7;
-
 /// Generates highways with elevation support based on layer tags and connectivity analysis
 pub fn generate_highways(
     editor: &mut WorldEditor,
@@ -612,6 +609,21 @@ fn generate_highways_internal(
                 .map(|g| g.elevation_enabled)
                 .unwrap_or(false);
 
+            // PATCHED for arnis-tiler: bridge=yes is authoritative.
+            //
+            // The previous heuristic required the terrain to dip
+            // VALLEY_BRIDGE_THRESHOLD (7) blocks below the max endpoint
+            // before promoting a bridge to a flat deck. That heuristic
+            // missed water-crossings: typical land→water dips are 2-5
+            // blocks, so harbor / river bridges fell back to terrain-
+            // following and visibly dipped toward water level.
+            //
+            // OSM `bridge=yes` (and viaduct/aqueduct/...) is high-quality
+            // and explicit. We trust it: any non-trivial bridge way
+            // (>= 25 blocks) gets rendered as a flat deck at max-endpoint
+            // elevation. Short overpasses (< 25 blocks) still ground-follow
+            // — they don't span valleys and the deck logic isn't worth the
+            // visible support pillar. Indoor highways are excluded above.
             let (is_valley_bridge, bridge_deck_y) =
                 if is_bridge && terrain_enabled && way.nodes.len() >= 2 && total_way_length >= 25 {
                     let start_node = &way.nodes[0];
@@ -619,43 +631,7 @@ fn generate_highways_internal(
                     let start_y = editor.get_ground_level(start_node.x, start_node.z);
                     let end_y = editor.get_ground_level(end_node.x, end_node.z);
                     let max_endpoint_y = start_y.max(end_y);
-
-                    // Sample terrain at middle nodes only (excluding endpoints we already have)
-                    // This avoids redundant get_ground_level() calls
-                    let middle_nodes = &way.nodes[1..way.nodes.len().saturating_sub(1)];
-                    let sampled_min = if middle_nodes.is_empty() {
-                        // No middle nodes, just use endpoints
-                        start_y.min(end_y)
-                    } else {
-                        // Sample up to 3 middle points (5 total with endpoints) for performance
-                        // Valleys are wide terrain features, so sparse sampling is sufficient
-                        let sample_count = middle_nodes.len().min(3);
-                        let step = if sample_count > 1 {
-                            (middle_nodes.len() - 1) / (sample_count - 1)
-                        } else {
-                            1
-                        };
-
-                        middle_nodes
-                            .iter()
-                            .step_by(step.max(1))
-                            .map(|node| editor.get_ground_level(node.x, node.z))
-                            .min()
-                            .unwrap_or(max_endpoint_y)
-                    };
-
-                    // Include endpoint elevations in the minimum calculation
-                    let min_terrain_y = sampled_min.min(start_y).min(end_y);
-
-                    // If ANY sampled point along the bridge is significantly lower than the max endpoint,
-                    // treat as valley bridge
-                    let is_valley = min_terrain_y < max_endpoint_y - VALLEY_BRIDGE_THRESHOLD;
-
-                    if is_valley {
-                        (true, max_endpoint_y)
-                    } else {
-                        (false, 0)
-                    }
+                    (true, max_endpoint_y)
                 } else {
                     (false, 0)
                 };
