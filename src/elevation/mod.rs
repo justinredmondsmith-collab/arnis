@@ -57,18 +57,22 @@ pub struct ElevationData {
 ///   - IGN France (WMS 1.3.0): 4096 × 4096 per request
 ///   - IGN Spain (WCS 2.0.1): 4096 × 4096 per request
 ///
-/// Chosen value 16384 covers bboxes up to ~256 km² at the default
-/// `--scale 1.0` without losing native resolution. The precision
-/// boundary rose from ~16.8 km² (4096²) → ~64 km² (8000²) → ~268 km²
-/// (16384²) across these revisions. Above 16384 per axis the grid is
-/// capped and block-level elevation is filled via bilinear interpolation
-/// — terrain remains generated, just with sub-native sampling.
+/// PATCHED for arnis-tiler chunked sub-grid prefetch (Phase 3): bumped
+/// from 16384 → 32768. Sub-grids in the chunked prefetch path are sized
+/// to ~16500 cells each (master / K_x + edge_overlap), which exceeds the
+/// original 16384 cap and got clamped — dropping ~150-250 cells off
+/// each sub's east edge and producing visible 16 m+ cliffs at every
+/// X sub-grid boundary in the assembled master grid.
 ///
-/// Memory note: a full 16384 × 16384 f64 grid is ~2 GB; with the
-/// water_blend_grid and a snapshot during repair we can peak around
-/// 6 GB for the maximum case. Target deployment (MapSmith) has >20 GB
-/// available. Typical user bboxes stay well below the cap.
-pub const MAX_ELEVATION_GRID_DIM: usize = 16384;
+/// 32768 covers bboxes up to ~1100 km² per sub at default scale (well
+/// above our 16500-cell sub width), so the next bump is far away.
+///
+/// Memory note: a full 32768 × 32768 f64 grid is ~8 GB; peak with
+/// water_blend_grid + repair snapshot is ~24 GB. Each chunked-prefetch
+/// sub-process owns its own ~1 GB grid (sub width ~16500), so the cap
+/// only matters for the unusual case of running arnis on a single bbox
+/// of >268 km² without arnis-tiler. Typical use stays well under.
+pub const MAX_ELEVATION_GRID_DIM: usize = 32768;
 
 /// Compute world and grid dimensions for the given bbox and scale.
 ///
