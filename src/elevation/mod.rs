@@ -1,4 +1,5 @@
 pub mod cache;
+mod master_grid;
 pub mod postprocess;
 pub mod provider;
 pub mod providers;
@@ -76,6 +77,23 @@ pub const MAX_ELEVATION_GRID_DIM: usize = 16384;
 ///
 /// Returns `(world_width, world_height, grid_width, grid_height)`.
 pub fn compute_grid_dims(bbox: &LLBBox, scale: f64) -> (usize, usize, usize, usize) {
+    // PATCHED for arnis-tiler master-grid alignment: when
+    // ARNIS_TILE_OVERRIDE_DIMS="W,H" is set, return those dimensions
+    // verbatim. This lets the per-tile grid (and the xzbbox via the
+    // matching override in llbbox_to_xzbbox) be exactly sized to
+    // span N master cells, so MC block at offset i samples master
+    // cell (col_offset + i) directly and adjacent tiles agree at
+    // their shared master cell.
+    if let Ok(s) = std::env::var("ARNIS_TILE_OVERRIDE_DIMS") {
+        let parts: Vec<&str> = s.split(',').collect();
+        if parts.len() == 2 {
+            if let (Ok(w), Ok(h)) = (parts[0].parse::<usize>(), parts[1].parse::<usize>()) {
+                if w >= 2 && h >= 2 {
+                    return (w, h, w.min(MAX_ELEVATION_GRID_DIM), h.min(MAX_ELEVATION_GRID_DIM));
+                }
+            }
+        }
+    }
     let (base_scale_z, base_scale_x) = geo_distance(bbox.min(), bbox.max());
     // Apply same floor() and scale operations as CoordTransformer.llbbox_to_xzbbox()
     let scale_factor_z: f64 = base_scale_z.floor() * scale;
@@ -111,6 +129,113 @@ pub fn fetch_elevation_data(
     aws_only: bool,
 ) -> Result<ElevationData, Box<dyn std::error::Error>> {
     let (world_width, world_height, grid_width, grid_height) = compute_grid_dims(bbox, scale);
+
+    // arnis-tiler integration: when ARNIS_USE_ELEVATION_GRID points at a
+    // master grid file (pre-fetched once for the metro bbox), bilinear-sample
+    // it for THIS tile's bbox instead of running an independent USGS fetch.
+    // Adjacent tiles read the same master cells at their shared edges, so
+    // their elevation values agree to floating-point precision — no terrain
+    // seams.
+    if let Ok(grid_path) = std::env::var("ARNIS_USE_ELEVATION_GRID") {
+        let path = std::path::PathBuf::from(&grid_path);
+
+        // Fast path: if ARNIS_TILE_MASTER_OFFSET is set, load ONLY this
+        // tile's slice from the master file. With a metro-scale master
+        // grid this is the difference between a 19 GB Vec per arnis
+        // process (8 parallel processes → OOM) and a ~1 GB slice. Each
+        // tile only needs its own slice anyway.
+        let direct_offset = std::env::var("ARNIS_TILE_MASTER_OFFSET")
+            .ok()
+            .and_then(|s| {
+                let parts: Vec<&str> = s.split(',').collect();
+                if parts.len() != 2 {
+                    return None;
+                }
+                let c_off = parts[0].parse::<usize>().ok()?;
+                let r_off = parts[1].parse::<usize>().ok()?;
+                Some((c_off, r_off))
+            });
+
+        if let Some((c_off, r_off)) = direct_offset {
+            match master_grid::load_grid_slice(&path, c_off, r_off, grid_width, grid_height) {
+                Ok(mut height_grid) => {
+                    emit_gui_progress_update(
+                        16.0,
+                        "Slicing elevation from master grid (arnis-tiler, slice-read)",
+                    );
+                    eprintln!(
+                        "[arnis-tiler] direct master slice (slice-read) at ({},{}) size {}×{}",
+                        c_off, r_off, grid_width, grid_height
+                    );
+                    fill_nan_values(&mut height_grid);
+
+                    let mc_heights = scale_to_minecraft(
+                        &height_grid,
+                        scale,
+                        ground_level,
+                        disable_height_limit,
+                        extended_max_y,
+                    );
+                    let heights_f32: Vec<Vec<f32>> = mc_heights
+                        .into_iter()
+                        .map(|row| row.into_iter().map(|v| v as f32).collect())
+                        .collect();
+                    return Ok(ElevationData {
+                        heights: heights_f32,
+                        width: grid_width,
+                        height: grid_height,
+                        world_width,
+                        world_height,
+                    });
+                }
+                Err(e) => {
+                    eprintln!(
+                        "ARNIS_USE_ELEVATION_GRID slice-read failed at {}: {} — falling back to full load",
+                        grid_path, e
+                    );
+                }
+            }
+        }
+
+        // Fallback: ARNIS_TILE_MASTER_OFFSET not set (e.g. caller wants
+        // bilinear interpolation rather than direct master-cell sampling).
+        // Load the full grid, then either bilinear-resample or direct-slice.
+        match master_grid::load_grid(&path) {
+            Ok(master) => {
+                emit_gui_progress_update(
+                    16.0,
+                    "Slicing elevation from master grid (arnis-tiler, full-load)",
+                );
+                let mut height_grid =
+                    master_grid::slice_for_tile(&master, bbox, grid_width, grid_height);
+                fill_nan_values(&mut height_grid);
+                let mc_heights = scale_to_minecraft(
+                    &height_grid,
+                    scale,
+                    ground_level,
+                    disable_height_limit,
+                    extended_max_y,
+                );
+                let heights_f32: Vec<Vec<f32>> = mc_heights
+                    .into_iter()
+                    .map(|row| row.into_iter().map(|v| v as f32).collect())
+                    .collect();
+                return Ok(ElevationData {
+                    heights: heights_f32,
+                    width: grid_width,
+                    height: grid_height,
+                    world_width,
+                    world_height,
+                });
+            }
+            Err(e) => {
+                eprintln!(
+                    "ARNIS_USE_ELEVATION_GRID set but failed to load {}: {} — falling back to per-tile fetch",
+                    grid_path, e
+                );
+            }
+        }
+    }
 
     // Select the best provider for this region. When `aws_only` is set the
     // user opted out of the regional high-res providers in favor of a faster
@@ -172,10 +297,52 @@ pub fn fetch_elevation_data(
 
     // Shared post-processing pipeline
     let mut height_grid = raw.heights_meters;
-    filter_elevation_outliers(&mut height_grid);
-    repair_terrain_anomalies(&mut height_grid);
-    // Safety net: fill any remaining NaN from tile gaps or partial provider coverage
-    fill_nan_values(&mut height_grid);
+    // PATCHED for tiled rendering (arnis-tiler):
+    // The IQR outlier filter computes Q1/Q3 from this tile's own elevation
+    // distribution, so adjacent tiles end up filtering different cells at
+    // their shared edges — same physical location, different filtered
+    // values, visible terrain seams when tiles are stitched.
+    //
+    // Skipping the IQR filter when ARNIS_TILED_RENDER=1 keeps the raw
+    // USGS values intact; tiny outliers may show up as 1-2 block bumps
+    // but those are far less visible than a 10-block tile-boundary
+    // cliff. The arnis-tiler runner sets this env var; standalone
+    // single-bbox runs preserve the original filter behavior.
+    let tiled_render = std::env::var("ARNIS_TILED_RENDER").ok().as_deref() == Some("1");
+    if !tiled_render {
+        filter_elevation_outliers(&mut height_grid);
+        // 5x5 median filter — tile-edge neighborhoods differ between
+        // adjacent tiles, producing different filtered values at the seam.
+        repair_terrain_anomalies(&mut height_grid);
+    }
+    // fill_nan_values uses neighbor cells to fill missing data; safe to
+    // run unconditionally because USGS 3DEP rarely has NaN cells, and
+    // when it does the fill propagates only locally. Skip however since
+    // any neighbor-based op contributes to seam variance.
+    if !tiled_render {
+        fill_nan_values(&mut height_grid);
+    }
+
+    // arnis-tiler integration: serialize the post-processed master grid for
+    // re-use by per-tile runs. Triggered by ARNIS_SAVE_ELEVATION_GRID;
+    // ARNIS_FETCH_ONLY=1 cleanly exits after save (skipping world generation
+    // entirely) so the master fetch is just an elevation extraction and
+    // doesn't waste compute generating a throwaway world.
+    if let Ok(save_path) = std::env::var("ARNIS_SAVE_ELEVATION_GRID") {
+        let path = std::path::PathBuf::from(&save_path);
+        match master_grid::save_grid(&path, bbox, scale, &height_grid) {
+            Ok(()) => eprintln!(
+                "Saved master elevation grid: {} ({}x{} cells)",
+                save_path,
+                if height_grid.is_empty() { 0 } else { height_grid[0].len() },
+                height_grid.len()
+            ),
+            Err(e) => eprintln!("Failed to save elevation grid to {}: {}", save_path, e),
+        }
+        if std::env::var("ARNIS_FETCH_ONLY").ok().as_deref() == Some("1") {
+            std::process::exit(0);
+        }
+    }
 
     // Land-cover-aware repair: built-up Gaussian smoothing targets urban
     // LiDAR/DSM classification errors, coastal pull-down flattens the
@@ -210,13 +377,20 @@ pub fn fetch_elevation_data(
         (0.0, 0)
     };
 
-    if let Some(lc) = land_cover {
-        apply_land_cover_repair(
-            &mut height_grid,
-            lc,
-            built_up_sigma_cells,
-            coastal_pull_cells,
-        );
+    // PATCHED for tiled rendering: the land-cover gaussian blur (σ=30m)
+    // has the same boundary-condition problem — kernels at tile edges
+    // see different neighborhoods than they would in a master-grid pass,
+    // so the same physical cell ends up with different smoothed values
+    // in adjacent tiles. Skip when ARNIS_TILED_RENDER=1.
+    if !tiled_render {
+        if let Some(lc) = land_cover {
+            apply_land_cover_repair(
+                &mut height_grid,
+                lc,
+                built_up_sigma_cells,
+                coastal_pull_cells,
+            );
+        }
     }
 
     let mc_heights = scale_to_minecraft(

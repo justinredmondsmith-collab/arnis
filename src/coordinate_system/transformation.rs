@@ -30,9 +30,36 @@ impl CoordTransformer {
             return Err(format!("{}: scale <= 0.0", &err_header));
         }
 
-        let (scale_factor_z, scale_factor_x) = geo_distance(llbbox.min(), llbbox.max());
-        let scale_factor_z: f64 = scale_factor_z.floor() * scale;
-        let scale_factor_x: f64 = scale_factor_x.floor() * scale;
+        // PATCHED for arnis-tiler master-grid alignment: when
+        // ARNIS_TILE_OVERRIDE_DIMS="W,H" is set, the per-tile xzbbox is
+        // forced to span exactly W blocks horizontally and H vertically.
+        // This must match the elevation grid override in compute_grid_dims
+        // so OSM rendering and elevation lookups operate on the same MC
+        // block range, and MC block i corresponds to master cell
+        // (col_offset + i).
+        let (scale_factor_z_pre, scale_factor_x_pre) =
+            if let Ok(s) = std::env::var("ARNIS_TILE_OVERRIDE_DIMS") {
+                let parts: Vec<&str> = s.split(',').collect();
+                if parts.len() == 2 {
+                    if let (Ok(w), Ok(h)) =
+                        (parts[0].parse::<usize>(), parts[1].parse::<usize>())
+                    {
+                        // world_width = scale_factor_x.floor() * scale + 1.
+                        // To force world_width = w with scale = 1.0, we
+                        // need scale_factor_x.floor() = w - 1, i.e. provide
+                        // (w - 1) / scale as the pre-scale value.
+                        ((h as f64 - 1.0) / scale, (w as f64 - 1.0) / scale)
+                    } else {
+                        geo_distance(llbbox.min(), llbbox.max())
+                    }
+                } else {
+                    geo_distance(llbbox.min(), llbbox.max())
+                }
+            } else {
+                geo_distance(llbbox.min(), llbbox.max())
+            };
+        let scale_factor_z: f64 = scale_factor_z_pre.floor() * scale;
+        let scale_factor_x: f64 = scale_factor_x_pre.floor() * scale;
 
         let xzbbox = XZBBox::rect_from_xz_lengths(scale_factor_x, scale_factor_z)
             .map_err(|e| format!("{}:\n{}", &err_header, e))?;

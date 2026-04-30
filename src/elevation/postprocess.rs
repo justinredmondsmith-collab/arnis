@@ -1167,30 +1167,38 @@ pub fn scale_to_minecraft(
     disable_height_limit: bool,
     extended_max_y: i32,
 ) -> Vec<Vec<f64>> {
-    // Derive min/max
-    let (min_height, max_height) = blurred_heights
+    // PATCHED for tiled rendering (arnis-tiler): use a fixed elevation
+    // reference (sea level = 0) instead of the per-tile min. The original
+    // code subtracted each tile's local min_height before scaling, which
+    // produced visible terrain seams between tiles whose bboxes happened
+    // to have different local minima — same world elevation rendering
+    // at different MC y depending on which tile owned that block.
+    //
+    // With min_height = 0, every tile maps elevation h to
+    //   mc_y = ground_level + h * scale
+    // deterministically, so adjacent tiles agree at their shared edges.
+    //
+    // Tradeoff: bboxes whose data is entirely below sea level will clamp
+    // to ground_level (not a problem for any urban area; would be wrong
+    // for, e.g., Death Valley standalone).
+    let max_height = blurred_heights
         .par_iter()
         .map(|row| {
-            let mut lo = f64::MAX;
             let mut hi = f64::MIN;
             for &h in row {
                 if h.is_finite() {
-                    lo = lo.min(h);
                     hi = hi.max(h);
                 }
             }
-            (lo, hi)
+            hi
         })
-        .reduce(
-            || (f64::MAX, f64::MIN),
-            |(lo1, hi1), (lo2, hi2)| (lo1.min(lo2), hi1.max(hi2)),
-        );
+        .reduce(|| f64::MIN, f64::max);
 
     let (min_height, _max_height, height_range) =
-        if !min_height.is_finite() || !max_height.is_finite() || min_height >= max_height {
+        if !max_height.is_finite() || max_height <= 0.0 {
             (0.0_f64, 0.0_f64, 0.0_f64)
         } else {
-            (min_height, max_height, max_height - min_height)
+            (0.0_f64, max_height, max_height)
         };
 
     let effective_max_y = if disable_height_limit {
