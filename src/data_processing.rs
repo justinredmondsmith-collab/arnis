@@ -248,6 +248,7 @@ pub fn generate_world_with_options(
                         &mut subway_points,
                         &rail_bridge_internal_endpoints,
                         &bridge_outlines,
+                        args,
                     );
                 } else if way.tags.contains_key("roller_coaster") {
                     railways::generate_roller_coaster(&mut editor, way);
@@ -412,7 +413,7 @@ pub fn generate_world_with_options(
     // Carve subway tunnel interiors now that underground is filled with stone.
     // This must happen after ground generation so AIR blocks are not overwritten.
     if !subway_points.is_empty() {
-        railways::carve_subway_interior(&mut editor, &subway_points);
+        railways::carve_subway_interior(&mut editor, &subway_points, args);
     }
 
     // Run after ground generation so anchor Y reflects the final terrain.
