@@ -91,6 +91,26 @@ pub struct Args {
     /// Print generation-only timing to stderr (excludes data fetching)
     #[arg(long, hide = true)]
     pub benchmark: bool,
+
+    /// Skip rendering of one or more railway types. Accepts a comma-separated
+    /// list (e.g. `--skip-railways subway,tram,light_rail`) or the special
+    /// value `all` to skip every railway. When set, arnis emits no rail
+    /// blocks, no subway shells, and no tunnel interior carving for the listed
+    /// types — useful when a downstream tool (e.g. arnis-tiler) owns rendering
+    /// for those domains. Defaults to empty (render everything).
+    #[arg(long, value_delimiter = ',')]
+    pub skip_railways: Vec<String>,
+}
+
+impl Args {
+    /// Returns true when the given railway type (e.g. `"subway"`, `"tram"`)
+    /// has been excluded via `--skip-railways`. The special value `all` in
+    /// the skip list short-circuits to true for every type.
+    pub fn should_skip_railway(&self, railway_type: &str) -> bool {
+        self.skip_railways
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case("all") || s.eq_ignore_ascii_case(railway_type))
+    }
 }
 
 /// Validates CLI arguments after parsing.
@@ -360,6 +380,67 @@ mod tests {
         // The --gui flag isn't used here, ugh. TODO clean up main.rs and its argparse usage.
         // let cmd = ["arnis", "--gui"];
         // assert!(Args::try_parse_from(cmd.iter()).is_ok());
+    }
+
+    #[test]
+    fn test_skip_railways_flag() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmp_path = tmpdir.path().to_str().unwrap();
+
+        // Default is empty — nothing skipped.
+        let cmd = ["arnis", "--output-dir", tmp_path, "--bbox", "1,2,3,4"];
+        let args = Args::parse_from(cmd.iter());
+        assert!(args.skip_railways.is_empty());
+        assert!(!args.should_skip_railway("subway"));
+        assert!(!args.should_skip_railway("tram"));
+
+        // Single value.
+        let cmd = [
+            "arnis",
+            "--output-dir",
+            tmp_path,
+            "--bbox",
+            "1,2,3,4",
+            "--skip-railways",
+            "subway",
+        ];
+        let args = Args::parse_from(cmd.iter());
+        assert_eq!(args.skip_railways, vec!["subway"]);
+        assert!(args.should_skip_railway("subway"));
+        assert!(args.should_skip_railway("SUBWAY")); // case-insensitive
+        assert!(!args.should_skip_railway("tram"));
+
+        // Comma-separated list.
+        let cmd = [
+            "arnis",
+            "--output-dir",
+            tmp_path,
+            "--bbox",
+            "1,2,3,4",
+            "--skip-railways",
+            "subway,tram,light_rail",
+        ];
+        let args = Args::parse_from(cmd.iter());
+        assert_eq!(args.skip_railways, vec!["subway", "tram", "light_rail"]);
+        assert!(args.should_skip_railway("subway"));
+        assert!(args.should_skip_railway("tram"));
+        assert!(args.should_skip_railway("light_rail"));
+        assert!(!args.should_skip_railway("rail"));
+
+        // `all` skips everything.
+        let cmd = [
+            "arnis",
+            "--output-dir",
+            tmp_path,
+            "--bbox",
+            "1,2,3,4",
+            "--skip-railways",
+            "all",
+        ];
+        let args = Args::parse_from(cmd.iter());
+        assert!(args.should_skip_railway("subway"));
+        assert!(args.should_skip_railway("tram"));
+        assert!(args.should_skip_railway("anything_else"));
     }
 
     #[test]

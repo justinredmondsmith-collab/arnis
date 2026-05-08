@@ -221,7 +221,7 @@ pub fn generate_world_with_options(
                 } else if way.tags.contains_key("bridge") {
                     //bridges::generate_bridges(&mut editor, way, ground_level); // TODO FIX
                 } else if way.tags.contains_key("railway") {
-                    railways::generate_railways(&mut editor, way, &mut subway_points);
+                    railways::generate_railways(&mut editor, way, &mut subway_points, args);
                 } else if way.tags.contains_key("roller_coaster") {
                     railways::generate_roller_coaster(&mut editor, way);
                 } else if way.tags.contains_key("aeroway") || way.tags.contains_key("area:aeroway")
@@ -363,7 +363,7 @@ pub fn generate_world_with_options(
     // Carve subway tunnel interiors now that underground is filled with stone.
     // This must happen after ground generation so AIR blocks are not overwritten.
     if !subway_points.is_empty() {
-        railways::carve_subway_interior(&mut editor, &subway_points);
+        railways::carve_subway_interior(&mut editor, &subway_points, args);
     }
 
     // Save world

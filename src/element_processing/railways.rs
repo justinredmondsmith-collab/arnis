@@ -1,3 +1,4 @@
+use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::osm_parser::ProcessedWay;
@@ -43,6 +44,7 @@ pub fn generate_railways(
     editor: &mut WorldEditor,
     element: &ProcessedWay,
     subway_points: &mut Vec<(i32, i32)>,
+    args: &Args,
 ) {
     if let Some(railway_type) = element.tags.get("railway") {
         // Subway lines get their own two-phase generation pipeline.
@@ -52,6 +54,17 @@ pub fn generate_railways(
                 .get("subway")
                 .map(|v| v == "yes")
                 .unwrap_or(false);
+
+        // --skip-railways handoff point: bail out before any blocks are placed
+        // (and, for subways, before any centerline points are recorded for
+        // phase 2 carving). The effective railway type for skip-list matching
+        // is "subway" when the subway heuristic above triggers, otherwise the
+        // raw OSM `railway=*` value.
+        let effective_type = if is_subway { "subway" } else { railway_type };
+        if args.should_skip_railway(effective_type) {
+            return;
+        }
+
         if is_subway {
             generate_subway_shell(editor, element, subway_points);
             return;
@@ -499,7 +512,19 @@ fn generate_subway_shell(
 /// Phase 2 of subway generation: carve the 3x3 air interior and place
 /// ceiling lights.  Called AFTER ground generation so that the carved
 /// air blocks are not overwritten by the underground stone fill.
-pub fn carve_subway_interior(editor: &mut WorldEditor, subway_points: &[(i32, i32)]) {
+///
+/// Honours `--skip-railways subway` (or `all`) by returning early. In normal
+/// operation `subway_points` will already be empty when subways are skipped
+/// (phase 1 records nothing), but checking here keeps the contract explicit
+/// in case a caller assembles points from another source.
+pub fn carve_subway_interior(
+    editor: &mut WorldEditor,
+    subway_points: &[(i32, i32)],
+    args: &Args,
+) {
+    if args.should_skip_railway("subway") {
+        return;
+    }
     for (idx, &(bx, bz)) in subway_points.iter().enumerate() {
         let ground_y = editor.get_ground_level(bx, bz);
         let ceil_y = ground_y - SUBWAY_DEPTH;
