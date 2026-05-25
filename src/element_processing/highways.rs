@@ -344,6 +344,20 @@ fn generate_highways_internal(
     const LAYER_HEIGHT_STEP: i32 = 6;
     let layer_boost = layer_value_effective * LAYER_HEIGHT_STEP;
 
+    // Tunnels must never be drawn on the surface: undergrounds are out of
+    // scope, and a road stripe painted where a tunnel runs is wrong. Skip
+    // rendering the roadbed for any tunnel way. (Street lamps / crossings are
+    // nodes and never carry a `tunnel` tag, so this only drops tunnel road
+    // ways, not surface furniture above a cut-and-cover entrance.)
+    if matches!(element, ProcessedElement::Way(_))
+        && element
+            .tags()
+            .get("tunnel")
+            .is_some_and(|v| v != "no")
+    {
+        return;
+    }
+
     if let Some(highway_type) = element.tags().get("highway") {
         if highway_type == "street_lamp" {
             if let ProcessedElement::Node(first_node) = element {
@@ -391,7 +405,7 @@ fn generate_highways_internal(
                                     None,
                                 );
                                 editor.set_block_absolute(
-                                    IRON_BARS,
+                                    OAK_FENCE,
                                     ax,
                                     pole_base + 2,
                                     az,
@@ -399,7 +413,7 @@ fn generate_highways_internal(
                                     None,
                                 );
                                 editor.set_block_absolute(
-                                    IRON_BARS,
+                                    OAK_FENCE,
                                     ax,
                                     pole_base + 3,
                                     az,
@@ -407,7 +421,7 @@ fn generate_highways_internal(
                                     None,
                                 );
                                 editor.set_block_absolute(
-                                    IRON_BARS,
+                                    OAK_FENCE,
                                     ax,
                                     pole_base + 4,
                                     az,
@@ -415,7 +429,7 @@ fn generate_highways_internal(
                                     None,
                                 );
                                 editor.set_block_absolute(
-                                    IRON_BARS,
+                                    OAK_FENCE,
                                     ax,
                                     pole_base + 5,
                                     az,
@@ -434,7 +448,7 @@ fn generate_highways_internal(
                                         4,
                                     );
                                     editor.set_block_absolute(
-                                        IRON_BARS,
+                                        OAK_FENCE,
                                         lx,
                                         bar_base + 6,
                                         lz,
@@ -453,7 +467,7 @@ fn generate_highways_internal(
                                     None,
                                 );
                                 editor.set_block_absolute(
-                                    IRON_BARS,
+                                    OAK_FENCE,
                                     x,
                                     head_base + 2,
                                     z,
@@ -461,7 +475,7 @@ fn generate_highways_internal(
                                     None,
                                 );
                                 editor.set_block_absolute(
-                                    IRON_BARS,
+                                    OAK_FENCE,
                                     x,
                                     head_base + 3,
                                     z,
