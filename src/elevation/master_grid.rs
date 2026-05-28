@@ -36,6 +36,10 @@ pub struct MasterGrid {
     pub max_lng: f64,
     pub width: usize,
     pub height: usize,
+    // Parsed from the ARNS_ELEV header for completeness; not consumed by the
+    // current slice paths (the master grid is already in MC-Y). Kept so the
+    // struct round-trips the full header.
+    #[allow(dead_code)]
     pub scale: f64,
     pub data: Vec<f32>,
 }
@@ -81,7 +85,7 @@ pub fn load_grid(path: &Path) -> std::io::Result<MasterGrid> {
             "ARNIS_USE_ELEVATION_GRID file: bad magic",
         ));
     }
-    let mut rd_f64 = |off: usize| -> f64 {
+    let rd_f64 = |off: usize| -> f64 {
         let mut a = [0u8; 8];
         a.copy_from_slice(&header[off..off + 8]);
         f64::from_le_bytes(a)
@@ -90,7 +94,7 @@ pub fn load_grid(path: &Path) -> std::io::Result<MasterGrid> {
     let min_lng = rd_f64(20);
     let max_lat = rd_f64(28);
     let max_lng = rd_f64(36);
-    let mut rd_u32 = |off: usize| -> u32 {
+    let rd_u32 = |off: usize| -> u32 {
         let mut a = [0u8; 4];
         a.copy_from_slice(&header[off..off + 4]);
         u32::from_le_bytes(a)
@@ -143,7 +147,7 @@ pub fn load_grid_slice(
             "ARNIS_USE_ELEVATION_GRID file: bad magic",
         ));
     }
-    let mut rd_u32 = |off: usize| -> u32 {
+    let rd_u32 = |off: usize| -> u32 {
         let mut a = [0u8; 4];
         a.copy_from_slice(&header[off..off + 4]);
         u32::from_le_bytes(a)
@@ -252,6 +256,10 @@ pub fn slice_for_tile(
 /// row_start, row_end_inclusive). Each tile's range is contiguous in master
 /// coords; adjacent tiles share the boundary cell, eliminating cell-stride
 /// drift between independently-resampled tile grids.
+// Forward API: consumed by arnis-tiler's planned aligned-slice path (not yet
+// wired from the binary's call sites). Kept rather than removed so the slice
+// geometry lives next to read_header/slice_for_tile.
+#[allow(dead_code)]
 pub fn aligned_slice_range(
     grid: &MasterGrid,
     tile_bbox: &LLBBox,
@@ -286,6 +294,8 @@ pub fn aligned_slice_range(
 /// adjacent tiles produce slices that share their boundary cell, so MC
 /// blocks rendered at the master seam pull elevation from the SAME master
 /// cell on both sides.
+// Forward API (see aligned_slice_range): not yet wired from the binary.
+#[allow(dead_code)]
 pub fn aligned_slice(
     grid: &MasterGrid,
     tile_bbox: &LLBBox,
