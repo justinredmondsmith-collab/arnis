@@ -52,6 +52,38 @@ impl Ground {
         }
     }
 
+    /// Test-only: build a Ground from synthetic elevation + land-cover grids,
+    /// mapped 1:1 (grid dims == world dims) so `level`/`cover_class` sample
+    /// grid cell (x, z) exactly. `heights` and `lc_grid` are indexed [z][x].
+    #[cfg(test)]
+    pub(crate) fn new_synthetic(heights: Vec<Vec<f32>>, lc_grid: Vec<Vec<u8>>) -> Self {
+        let grid_h = heights.len();
+        let grid_w = heights.first().map_or(0, Vec::len);
+        let lc_h = lc_grid.len();
+        let lc_w = lc_grid.first().map_or(0, Vec::len);
+        let mut lc = LandCoverData {
+            grid: lc_grid,
+            water_distance: vec![vec![0u8; lc_w]; lc_h],
+            water_blend_grid: Vec::new(),
+            width: lc_w,
+            height: lc_h,
+        };
+        lc.refresh_water_blend_grid();
+        Self {
+            elevation_enabled: true,
+            ground_level: 0,
+            elevation_data: Some(ElevationData {
+                heights,
+                width: grid_w,
+                height: grid_h,
+                world_width: grid_w,
+                world_height: grid_h,
+            }),
+            land_cover: Some(lc),
+            rotation_mask: None,
+        }
+    }
+
     pub fn new_enabled(
         bbox: &LLBBox,
         scale: f64,

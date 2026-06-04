@@ -398,8 +398,15 @@ pub fn carve_lc_water_pass(
                 continue;
             }
             let water_y = ground.water_level(coord);
-            // Skip land bumps an over-claiming water polygon sits above.
-            if editor.get_ground_level(x, z) > water_y {
+            // Deepen only columns the renderer actually placed water in (the
+            // ground-layer film pass / OSM water areas, both at this same
+            // water_level Y). Raw LC_WATER over-claims the shore fringe —
+            // at-waterline coastal grass and ESA-misclassified piers were
+            // deliberately left as land — and the old elevation gate
+            // (level > water_y, always false there since water_level() is a
+            // neighbourhood min that includes the centre) bulldozed that
+            // placed terrain into water.
+            if !editor.check_for_block_absolute(x, water_y, z, Some(&[WATER]), None) {
                 continue;
             }
             carve_water_column(editor, x, z, water_y, bwf.depth_at(x, z));
@@ -410,6 +417,166 @@ pub fn carve_lc_water_pass(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordinate_system::geographic::LLBBox;
+    use crate::ground::Ground;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    // ── carve_lc_water_pass gate harness ────────────────────────────────
+    // 17×17 world, blocks 0..=16, 1:1 grid↔world mapping via new_synthetic.
+
+    const TW: usize = 17;
+
+    fn test_bbox() -> XZBBox {
+        XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap()
+    }
+
+    fn make_editor<'a>(xzbbox: &'a XZBBox, ground: &Arc<Ground>) -> WorldEditor<'a> {
+        let mut editor = WorldEditor::new(
+            PathBuf::from("/tmp/arnis-water-depth-gate-test"),
+            xzbbox,
+            LLBBox::new(0.0, 0.0, 0.001, 0.001).unwrap(),
+        );
+        editor.set_ground(Arc::clone(ground));
+        editor
+    }
+
+    fn flat_heights(y: f32) -> Vec<Vec<f32>> {
+        vec![vec![y; TW]; TW]
+    }
+
+    /// Non-water land cover everywhere except the given water cells.
+    fn lc_with_water_at(cells: &[(usize, usize)]) -> Vec<Vec<u8>> {
+        let mut grid = vec![vec![30u8; TW]; TW];
+        for &(x, z) in cells {
+            grid[z][x] = LC_WATER;
+        }
+        grid
+    }
+
+    /// BigWaterField covering the whole bbox with one uniform carve depth.
+    fn uniform_field(xzbbox: &XZBBox, depth: u8) -> BigWaterField {
+        let width = (xzbbox.max_x() - xzbbox.min_x() + 1) as usize;
+        let height = (xzbbox.max_z() - xzbbox.min_z() + 1) as usize;
+        let total = width * height;
+        let mut field = BigWaterField {
+            depth: vec![0u8; total.div_ceil(2)],
+            width,
+            height,
+            min_x: xzbbox.min_x(),
+            min_z: xzbbox.min_z(),
+        };
+        for i in 0..total {
+            nibble_set(&mut field.depth, i, depth);
+        }
+        field
+    }
+
+    fn has_water_at(editor: &WorldEditor, x: i32, y: i32, z: i32) -> bool {
+        editor.check_for_block_absolute(x, y, z, Some(&[WATER]), None)
+    }
+
+    /// 82.7% flood case: LC_WATER-classified coastal grass sitting EXACTLY at
+    /// the waterline (level == water_level == Y10) that the renderer left dry.
+    /// The carve must not flood it.
+    #[test]
+    fn carve_skips_at_waterline_lc_water() {
+        let xzbbox = test_bbox();
+        let ground = Arc::new(Ground::new_synthetic(
+            flat_heights(10.0),
+            lc_with_water_at(&[(8, 8)]),
+        ));
+        let mut editor = make_editor(&xzbbox, &ground);
+        // The renderer (film pass / OSM water areas) placed NO water here.
+        let bwf = uniform_field(&xzbbox, 0);
+        let road_mask = RoadMaskBitmap::new_empty();
+
+        carve_lc_water_pass(&mut editor, &ground, &xzbbox, &bwf, &road_mask);
+
+        assert!(
+            !has_water_at(&editor, 8, 10, 8),
+            "at-waterline land cell (level == water_level) must NOT be flooded"
+        );
+    }
+
+    /// 17.3% flood case: ESA-misclassified pier — DEM water-flattened to the
+    /// waterline, renderer placed a dry deck and NO water in the column. The
+    /// carve must not slip water in underneath it.
+    #[test]
+    fn carve_skips_above_water_pier() {
+        let xzbbox = test_bbox();
+        let ground = Arc::new(Ground::new_synthetic(
+            flat_heights(10.0),
+            lc_with_water_at(&[(8, 8)]),
+        ));
+        let mut editor = make_editor(&xzbbox, &ground);
+        // Pier deck above the waterline; column has no water.
+        editor.set_block_absolute(STONE, 8, 11, 8, None, None);
+        let bwf = uniform_field(&xzbbox, 2);
+        let road_mask = RoadMaskBitmap::new_empty();
+
+        carve_lc_water_pass(&mut editor, &ground, &xzbbox, &bwf, &road_mask);
+
+        assert!(
+            !has_water_at(&editor, 8, 10, 8),
+            "dry pier column must not gain water at the waterline"
+        );
+    }
+
+    /// Genuine sub-waterline water: the renderer painted the water surface, so
+    /// the carve must deepen it to the full field depth (guards against a
+    /// FIX-D-style regression that wipes real bathymetry). Must pass BEFORE
+    /// and AFTER the gate fix.
+    #[test]
+    fn carve_keeps_genuine_subwaterline_water() {
+        let xzbbox = test_bbox();
+        let ground = Arc::new(Ground::new_synthetic(
+            flat_heights(8.0),
+            lc_with_water_at(&[(8, 8)]),
+        ));
+        let mut editor = make_editor(&xzbbox, &ground);
+        // Film pass pre-paint: water surface at this cell's water_level (Y8).
+        editor.set_block_absolute(WATER, 8, 8, 8, None, Some(&[]));
+        let bwf = uniform_field(&xzbbox, 3);
+        let road_mask = RoadMaskBitmap::new_empty();
+
+        carve_lc_water_pass(&mut editor, &ground, &xzbbox, &bwf, &road_mask);
+
+        for y in [8, 7, 6, 5] {
+            assert!(
+                has_water_at(&editor, 8, y, 8),
+                "genuine water column must be carved to full depth (missing water at Y{y})"
+            );
+        }
+        // Bed below the carve: present and not water.
+        assert!(
+            editor.block_exists_absolute(8, 4, 8) && !has_water_at(&editor, 8, 4, 8),
+            "carved column must end in a solid bed at Y4"
+        );
+    }
+
+    /// Causeway regression guard: road-masked cells are untouched even when
+    /// they are genuine water cells. Must pass BEFORE and AFTER the fix.
+    #[test]
+    fn carve_respects_road_mask() {
+        let xzbbox = test_bbox();
+        let ground = Arc::new(Ground::new_synthetic(
+            flat_heights(8.0),
+            lc_with_water_at(&[(8, 8)]),
+        ));
+        let mut editor = make_editor(&xzbbox, &ground);
+        editor.set_block_absolute(WATER, 8, 8, 8, None, Some(&[]));
+        let bwf = uniform_field(&xzbbox, 3);
+        let mut road_mask = RoadMaskBitmap::new(&xzbbox);
+        road_mask.set(8, 8);
+
+        carve_lc_water_pass(&mut editor, &ground, &xzbbox, &bwf, &road_mask);
+
+        assert!(
+            !has_water_at(&editor, 8, 7, 8),
+            "road-masked cell must not be deepened by the carve"
+        );
+    }
 
     #[test]
     fn dt_distance_from_shore() {
