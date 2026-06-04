@@ -453,7 +453,14 @@ fn scanline_fill_water(
                 // that invariant for the depth carve. Over-claiming harbor
                 // polygons cover the contested shore fringe — at-waterline
                 // parks, piers and promenades — and bulldozing them floods
-                // the shoreline (the v5 Battery Park regression).
+                // the shoreline (the v5 Battery Park regression). Pier DECKS
+                // sit above water_y, so open water is still carved beneath
+                // them — intended: piers stand over water.
+                //
+                // NOTE: differs from carve_lc_water_pass's gate (water must
+                // already be present) because this scanline runs BEFORE
+                // ground generation: a vacant waterline cell here is open
+                // water that must still be filled, not dry land.
                 if editor.block_exists_absolute(x, water_y, z)
                     && !editor.check_for_block_absolute(
                         x,
@@ -534,6 +541,32 @@ mod tests {
         assert!(
             editor.check_for_block_absolute(8, 10, 8, Some(&[STONE]), None),
             "OSM water polygon must not overwrite an already-placed land block"
+        );
+    }
+
+    /// Water already present at the waterline (e.g. an earlier overlapping
+    /// polygon) is still claimed and carved — completes the gate's truth
+    /// table: vacant => fill, water => carve, land => skip.
+    #[test]
+    fn scanline_deepens_existing_water() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = Arc::new(Ground::new_synthetic(
+            vec![vec![10.0; TW]; TW],
+            vec![vec![30u8; TW]; TW],
+        ));
+        let (mut editor, way, bwf, road_mask) = setup(&xzbbox, &ground);
+        editor.set_block_absolute(WATER, 8, 10, 8, None, Some(&[]));
+
+        generate_water_area_from_way(&mut editor, &way, &xzbbox, &bwf, &road_mask);
+
+        assert!(
+            editor.check_for_block_absolute(8, 10, 8, Some(&[WATER]), None),
+            "existing water at the waterline must stay water"
+        );
+        assert!(
+            editor.block_exists_absolute(8, 9, 8)
+                && !editor.check_for_block_absolute(8, 9, 8, Some(&[WATER]), None),
+            "carve must lay a bed under the claimed water cell"
         );
     }
 

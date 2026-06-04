@@ -403,9 +403,17 @@ pub fn carve_lc_water_pass(
             // water_level Y). Raw LC_WATER over-claims the shore fringe —
             // at-waterline coastal grass and ESA-misclassified piers were
             // deliberately left as land — and the old elevation gate
-            // (level > water_y, always false there since water_level() is a
-            // neighbourhood min that includes the centre) bulldozed that
-            // placed terrain into water.
+            // (level > water_y) could never skip them: on flat terrain
+            // water_level() returns the cell's own level verbatim, and on
+            // steep terrain it is a neighbourhood min that includes the
+            // centre, so level >= water_y holds either way and the strict >
+            // only spared cells with a strictly-lower neighbour. The carve
+            // then bulldozed the placed terrain (empty override blacklist).
+            //
+            // NOTE: the OSM scanline gate in water_areas.rs uses the OPPOSITE
+            // vacant-cell policy (vacant => fill) because it runs BEFORE
+            // ground generation; this pass runs after, when every dry column
+            // already has its surface, so "no water here" means dry land.
             if !editor.check_for_block_absolute(x, water_y, z, Some(&[WATER]), None) {
                 continue;
             }
@@ -520,6 +528,60 @@ mod tests {
         assert!(
             !has_water_at(&editor, 8, 10, 8),
             "dry pier column must not gain water at the waterline"
+        );
+    }
+
+    /// A non-water block sitting EXACTLY at water_y on an LC_WATER cell (an
+    /// OSM promenade/park surface) must survive even with positive field
+    /// depth — the symmetric case to the scanline's no-overwrite test.
+    #[test]
+    fn carve_skips_land_block_at_water_y() {
+        let xzbbox = test_bbox();
+        let ground = Arc::new(Ground::new_synthetic(
+            flat_heights(10.0),
+            lc_with_water_at(&[(8, 8)]),
+        ));
+        let mut editor = make_editor(&xzbbox, &ground);
+        editor.set_block_absolute(STONE, 8, 10, 8, None, None);
+        let bwf = uniform_field(&xzbbox, 3);
+        let road_mask = RoadMaskBitmap::new_empty();
+
+        carve_lc_water_pass(&mut editor, &ground, &xzbbox, &bwf, &road_mask);
+
+        assert!(
+            editor.check_for_block_absolute(8, 10, 8, Some(&[STONE]), None),
+            "land block at the waterline must survive the carve"
+        );
+        assert!(
+            !has_water_at(&editor, 8, 9, 8),
+            "no deepening under a dry land cell"
+        );
+    }
+
+    /// Steep LC_WATER cell (exercises the water_level() snap path) the
+    /// renderer left dry: must not be carved. Pre-fix the old gate
+    /// (level > water_y) carved it whenever the centre was the local min.
+    #[test]
+    fn carve_skips_steep_dry_lc_water_cell() {
+        let xzbbox = test_bbox();
+        // Cliff: x < 8 at Y20, x >= 8 at Y10 — slope(8,8) = 10 > 2, and the
+        // centre is the radius-3 minimum, so water_level == level == 10.
+        let heights: Vec<Vec<f32>> = (0..TW)
+            .map(|_| (0..TW).map(|x| if x < 8 { 20.0 } else { 10.0 }).collect())
+            .collect();
+        let ground = Arc::new(Ground::new_synthetic(
+            heights,
+            lc_with_water_at(&[(8, 8)]),
+        ));
+        let mut editor = make_editor(&xzbbox, &ground);
+        let bwf = uniform_field(&xzbbox, 2);
+        let road_mask = RoadMaskBitmap::new_empty();
+
+        carve_lc_water_pass(&mut editor, &ground, &xzbbox, &bwf, &road_mask);
+
+        assert!(
+            !has_water_at(&editor, 8, 10, 8),
+            "steep dry LC_WATER cell must not be flooded"
         );
     }
 
