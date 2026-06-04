@@ -448,9 +448,111 @@ fn scanline_fill_water(
                 if ground_y > water_y {
                     continue;
                 }
+                // Stock water placement (set_block_absolute with no overrides)
+                // never overwrote a block another element already placed; keep
+                // that invariant for the depth carve. Over-claiming harbor
+                // polygons cover the contested shore fringe — at-waterline
+                // parks, piers and promenades — and bulldozing them floods
+                // the shoreline (the v5 Battery Park regression).
+                if editor.block_exists_absolute(x, water_y, z)
+                    && !editor.check_for_block_absolute(
+                        x,
+                        water_y,
+                        z,
+                        Some(&[crate::block_definitions::WATER]),
+                        None,
+                    )
+                {
+                    continue;
+                }
                 // depth_at gives the carved depth (0 without land-cover water data).
                 carve_water_column(editor, x, z, water_y, bwf.depth_at(x, z));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block_definitions::{STONE, WATER};
+    use crate::ground::Ground;
+    use crate::osm_parser::ProcessedNode;
+    use crate::water_depth::compute_big_water_field;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    const TW: usize = 17; // 17×17 world, blocks 0..=16, 1:1 grid↔world
+
+    fn node(x: i32, z: i32) -> ProcessedNode {
+        ProcessedNode {
+            id: 0,
+            tags: HashMap::new(),
+            x,
+            z,
+        }
+    }
+
+    /// Closed square water polygon covering blocks [2,14]² on flat Y10 ground.
+    fn setup<'a>(
+        xzbbox: &'a XZBBox,
+        ground: &Arc<Ground>,
+    ) -> (WorldEditor<'a>, ProcessedWay, BigWaterField, RoadMaskBitmap) {
+        let mut editor = WorldEditor::new(
+            PathBuf::from("/tmp/arnis-water-areas-test"),
+            xzbbox,
+            crate::coordinate_system::geographic::LLBBox::new(0.0, 0.0, 0.001, 0.001).unwrap(),
+        );
+        editor.set_ground(Arc::clone(ground));
+        let way = ProcessedWay {
+            id: 1,
+            nodes: vec![node(2, 2), node(14, 2), node(14, 14), node(2, 14), node(2, 2)],
+            tags: HashMap::new(),
+        };
+        // No LC_WATER cells -> empty field, depth 0 everywhere (surface-only carve).
+        let bwf = compute_big_water_field(ground, xzbbox);
+        (editor, way, bwf, RoadMaskBitmap::new_empty())
+    }
+
+    /// Stock invariant: OSM water never bulldozes terrain another element
+    /// already placed at the waterline (piers, parks, promenades on the
+    /// contested shore fringe). The depth carve must keep that invariant.
+    #[test]
+    fn scanline_keeps_already_placed_land_block() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = Arc::new(Ground::new_synthetic(
+            vec![vec![10.0; TW]; TW],
+            vec![vec![30u8; TW]; TW],
+        ));
+        let (mut editor, way, bwf, road_mask) = setup(&xzbbox, &ground);
+        // An earlier-processed element claimed this cell's waterline spot.
+        editor.set_block_absolute(STONE, 8, 10, 8, None, None);
+
+        generate_water_area_from_way(&mut editor, &way, &xzbbox, &bwf, &road_mask);
+
+        assert!(
+            editor.check_for_block_absolute(8, 10, 8, Some(&[STONE]), None),
+            "OSM water polygon must not overwrite an already-placed land block"
+        );
+    }
+
+    /// Vacant cells inside the polygon still get their water surface.
+    /// Must pass BEFORE and AFTER the gate fix.
+    #[test]
+    fn scanline_fills_vacant_cells_with_water() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = Arc::new(Ground::new_synthetic(
+            vec![vec![10.0; TW]; TW],
+            vec![vec![30u8; TW]; TW],
+        ));
+        let (mut editor, way, bwf, road_mask) = setup(&xzbbox, &ground);
+
+        generate_water_area_from_way(&mut editor, &way, &xzbbox, &bwf, &road_mask);
+
+        assert!(
+            editor.check_for_block_absolute(5, 10, 5, Some(&[WATER]), None),
+            "vacant polygon cell must get its water surface"
+        );
     }
 }
