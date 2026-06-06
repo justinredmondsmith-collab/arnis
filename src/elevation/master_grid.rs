@@ -44,8 +44,46 @@ pub struct MasterGrid {
     pub data: Vec<f32>,
 }
 
+/// Serialize `height_grid` to `path` atomically.
+///
+/// The master grid is ~67 MB and is read back by the arnis-tiler runner; a
+/// crash mid-write previously left a truncated file whose 60-byte header still
+/// parsed cleanly, so the tiler silently reused garbage (2026-06-06 marina
+/// investigation). We now write to a `*.grid.tmp` sibling, `sync_all()` the
+/// fully-written body to disk, then `rename` it over the destination. The
+/// rename is atomic on the same filesystem (the tmp path is always a sibling),
+/// so a reader sees either the old file or the complete new one — never a
+/// half-written body. On any error the tmp file is removed best-effort.
 pub fn save_grid(
     path: &Path,
+    bbox: &LLBBox,
+    scale: f64,
+    height_grid: &[Vec<f64>],
+) -> std::io::Result<()> {
+    // Sibling temp path in the same directory so the final rename is atomic.
+    // `with_extension("grid.tmp")` replaces the trailing `.grid` (or any/no
+    // extension) → `<stem>.grid.tmp`, e.g. master-elevation.grid → .grid.tmp.
+    let tmp_path = path.with_extension("grid.tmp");
+
+    match write_grid_to(&tmp_path, bbox, scale, height_grid) {
+        Ok(()) => match std::fs::rename(&tmp_path, path) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp_path);
+                Err(e)
+            }
+        },
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(e)
+        }
+    }
+}
+
+/// Write the full grid body to `tmp_path` and fsync it before returning. Kept
+/// separate from `save_grid` so the temp file is cleaned up on any failure here.
+fn write_grid_to(
+    tmp_path: &Path,
     bbox: &LLBBox,
     scale: f64,
     height_grid: &[Vec<f64>],
@@ -53,7 +91,7 @@ pub fn save_grid(
     let h = height_grid.len();
     let w = if h > 0 { height_grid[0].len() } else { 0 };
 
-    let mut f = File::create(path)?;
+    let mut f = File::create(tmp_path)?;
     f.write_all(MAGIC)?;
     f.write_all(&bbox.min().lat().to_le_bytes())?;
     f.write_all(&bbox.min().lng().to_le_bytes())?;
@@ -72,6 +110,9 @@ pub fn save_grid(
         }
         f.write_all(&buf)?;
     }
+    // Flush the body to disk before the rename so a crash after rename can't
+    // surface an empty/partial file (rename only orders against synced data).
+    f.sync_all()?;
     Ok(())
 }
 
@@ -312,4 +353,75 @@ pub fn aligned_slice(
         }
     }
     (out, c_lo, c_hi, r_lo, r_hi)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_bbox() -> LLBBox {
+        // arbitrary small, valid NYC-ish bbox; values are round-tripped verbatim
+        LLBBox::new(40.700, -74.020, 40.703, -74.016).unwrap()
+    }
+
+    #[test]
+    fn save_grid_round_trips_and_leaves_no_tmp_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("master-elevation.grid");
+        let tmp_sibling = path.with_extension("grid.tmp");
+
+        let bbox = sample_bbox();
+        let scale = 1.0;
+        // 3 rows x 4 cols, distinct values so we can verify exact placement.
+        let grid: Vec<Vec<f64>> = (0..3)
+            .map(|r| (0..4).map(|c| (r * 4 + c) as f64).collect())
+            .collect();
+
+        save_grid(&path, &bbox, scale, &grid).unwrap();
+
+        // Atomic-write hygiene: the destination exists and the tmp sibling
+        // produced during the write has been renamed away (none left behind).
+        assert!(path.exists(), "destination grid file should exist");
+        assert!(
+            !tmp_sibling.exists(),
+            "no .grid.tmp sibling should remain after a successful save"
+        );
+
+        // Round-trip: header + body load back identically.
+        let loaded = load_grid(&path).unwrap();
+        assert_eq!(loaded.width, 4);
+        assert_eq!(loaded.height, 3);
+        assert_eq!(loaded.scale, scale);
+        assert!((loaded.min_lat - bbox.min().lat()).abs() < 1e-12);
+        assert!((loaded.min_lng - bbox.min().lng()).abs() < 1e-12);
+        assert!((loaded.max_lat - bbox.max().lat()).abs() < 1e-12);
+        assert!((loaded.max_lng - bbox.max().lng()).abs() < 1e-12);
+        for r in 0..3 {
+            for c in 0..4 {
+                let expected = (r * 4 + c) as f32;
+                assert_eq!(loaded.data[r * 4 + c], expected, "cell ({r},{c})");
+            }
+        }
+    }
+
+    #[test]
+    fn save_grid_overwrites_existing_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("master-elevation.grid");
+        let bbox = sample_bbox();
+
+        // First write (small grid), then overwrite with a different-sized grid.
+        let g1: Vec<Vec<f64>> = vec![vec![1.0, 2.0]];
+        save_grid(&path, &bbox, 1.0, &g1).unwrap();
+
+        let g2: Vec<Vec<f64>> = vec![vec![9.0, 8.0, 7.0], vec![6.0, 5.0, 4.0]];
+        save_grid(&path, &bbox, 2.0, &g2).unwrap();
+
+        assert!(!path.with_extension("grid.tmp").exists());
+        let loaded = load_grid(&path).unwrap();
+        assert_eq!(loaded.width, 3);
+        assert_eq!(loaded.height, 2);
+        assert_eq!(loaded.scale, 2.0);
+        assert_eq!(loaded.data, vec![9.0f32, 8.0, 7.0, 6.0, 5.0, 4.0]);
+    }
 }
