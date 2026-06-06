@@ -5,6 +5,7 @@ use crate::deterministic_rng::element_rng;
 use crate::element_processing::surfaces::get_blocks_for_surface;
 use crate::element_processing::tree::Tree;
 use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
+use crate::land_cover_osm_water_override::has_explicit_water_tag;
 use crate::osm_parser::{ProcessedMemberRole, ProcessedRelation, ProcessedWay};
 use crate::world_editor::WorldEditor;
 use rand::Rng;
@@ -17,7 +18,6 @@ pub fn generate_leisure(
     building_footprints: &BuildingFootprintBitmap,
 ) {
     if let Some(leisure_type) = element.tags.get("leisure") {
-        // 2026-06-06 Morris Canal Basin water-loss fix.
         // OSM way 53865549 carries BOTH `leisure=marina` AND `water=lake`.
         // The `water` tag gives it water-priority in the element sort, so it
         // ran BEFORE the basin water relation, but it dispatches here, where
@@ -30,7 +30,7 @@ pub fn generate_leisure(
         // leisure values this function itself renders as actual WATER
         // (swimming_pool / swimming_area) keep their behaviour: painting water
         // over a water-tagged pool is intended and harmless.
-        if element.tags.contains_key("water")
+        if has_explicit_water_tag(&element.tags)
             && !matches!(leisure_type.as_str(), "swimming_pool" | "swimming_area")
         {
             return;
@@ -311,8 +311,12 @@ mod tests {
 
         for &(x, z) in PROBES {
             // No block of any kind should have been written at the waterline.
+            // Resolve the waterline from the ground (y-offset 0) instead of
+            // hardcoding the synthetic ground Y, so this stays correct if the
+            // fixture's ground height ever changes.
+            let waterline_y = editor.get_absolute_y(x, 0, z);
             assert!(
-                !editor.block_exists_absolute(x, 10, z),
+                !editor.block_exists_absolute(x, waterline_y, z),
                 "marina+water polygon must not paint anything at interior ({x},{z}); \
                  the water generators own this surface"
             );
@@ -367,6 +371,32 @@ mod tests {
         assert!(
             editor.check_for_block(8, 0, 8, Some(&[WATER])),
             "leisure=swimming_pool with a water tag must still paint WATER"
+        );
+    }
+
+    /// Negation-aware: `water=no` is NOT a water body, so the guard must not
+    /// fire. A `leisure=marina` + `water=no` polygon still paints grass like a
+    /// plain marina would.
+    #[test]
+    fn marina_with_water_no_still_paints_grass() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = flat_ground();
+        let mut editor = new_editor(&xzbbox, &ground);
+        let mut tags = HashMap::new();
+        tags.insert("leisure".to_string(), "marina".to_string());
+        tags.insert("water".to_string(), "no".to_string());
+        let way = closed_square(tags);
+        let cache = FloodFillCache::new();
+        let footprints = BuildingFootprintBitmap::new_empty();
+        let args = test_args();
+
+        generate_leisure(&mut editor, &way, &args, &cache, &footprints);
+
+        // The negated water tag must NOT trip the water guard.
+        assert!(
+            editor.check_for_block(8, 0, 8, Some(&[GRASS_BLOCK])),
+            "leisure=marina with water=no must still paint GRASS_BLOCK (guard \
+             must not fire on a negated water tag)"
         );
     }
 }

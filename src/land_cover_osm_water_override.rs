@@ -181,7 +181,7 @@ fn has_water_polygon_tags(tags: &HashMap<String, String>) -> bool {
 }
 
 // `water=no` and similar negatives must not count as water.
-fn has_explicit_water_tag(tags: &HashMap<String, String>) -> bool {
+pub(crate) fn has_explicit_water_tag(tags: &HashMap<String, String>) -> bool {
     tags.get("water")
         .is_some_and(|v| !matches!(v.as_str(), "no" | "0" | "false"))
 }
