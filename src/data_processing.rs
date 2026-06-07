@@ -369,7 +369,7 @@ pub fn generate_world_with_options(
                         &building_footprints,
                     );
                 } else if rel.tags.contains_key("man_made") {
-                    man_made::generate_man_made(&mut editor, &element, args);
+                    man_made::generate_man_made_from_relation(&mut editor, rel, args);
                 }
                 // Release flood fill cache entries for all ways in this relation
                 let way_ids: Vec<u64> = rel.members.iter().map(|m| m.way.id).collect();
