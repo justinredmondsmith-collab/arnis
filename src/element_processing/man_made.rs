@@ -107,17 +107,18 @@ fn generate_pier_from_relation(editor: &mut WorldEditor, rel: &ProcessedRelation
             } else {
                 // Not closeable within tolerance — skip rather than fabricate
                 // a long straight closing edge across the river.
+                println!("Skipping pier relation {} due to invalid polygon", rel.id);
                 continue;
             }
         }
 
         let filled = flood_fill_area(&coords, None);
-        for (idx, &(x, z)) in filled.iter().enumerate() {
+        for &(x, z) in &filled {
             // Deck one block above the (lidar-elevated) ground, same as the
             // way-pier deck height.
             editor.set_block(OAK_SLAB, x, 1, z, None, None);
             // Sparse support pillars on a 4-block grid, dropped from the deck.
-            if x % 4 == 0 && z % 4 == 0 && idx % 4 == 0 {
+            if x % 4 == 0 && z % 4 == 0 {
                 editor.set_block(OAK_LOG, x, 0, z, None, None);
             }
         }
