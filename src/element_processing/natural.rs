@@ -17,14 +17,15 @@ pub fn generate_natural(
 ) {
     if let Some(natural_type) = element.tags().get("natural") {
         // Water-NAMING features (strait/bay/sound/fjord — centerline ways
-        // and sea-area labels) are not physical geometry. The unmatched
-        // default below would bresenham a grass ridge for miles through
-        // open water (East River / Hell Gate centerlines, LargeSizedTest
-        // 2026-06-07). Water surfaces are owned by the water generators;
-        // natural=bay RELATIONS never reach here (water-routed in
-        // data_processing.rs:333-346). Closed strait/bay polygons are also
-        // correctly suppressed. natural=cape is LAND — deliberately not
-        // in this list.
+        // and sea-area labels) are not physical geometry. Without this guard
+        // the unmatched default below would bresenham a grass ridge along the
+        // centerline (defense-in-depth; the LargeSizedTest 2026-06-07 artifact
+        // has a separate root cause under active investigation). Water surfaces
+        // are owned by the water generators; natural=bay RELATIONS never reach
+        // here (water-routed in data_processing.rs:333-346). natural=strait/
+        // sound/fjord relations do reach generate_natural_from_relation but
+        // are caught by this same guard. Closed polygons are also suppressed.
+        // natural=cape is LAND — deliberately not in this list.
         if matches!(natural_type.as_str(), "strait" | "bay" | "sound" | "fjord") {
             return;
         }
