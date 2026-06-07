@@ -1,7 +1,10 @@
 use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
-use crate::osm_parser::{ProcessedElement, ProcessedNode, ProcessedWay};
+use crate::floodfill::flood_fill_area;
+use crate::osm_parser::{
+    ProcessedElement, ProcessedMemberRole, ProcessedNode, ProcessedRelation, ProcessedWay,
+};
 use crate::world_editor::WorldEditor;
 use std::collections::HashSet;
 
@@ -30,6 +33,94 @@ pub fn generate_man_made(editor: &mut WorldEditor, element: &ProcessedElement, a
             }
             "mast" => generate_antenna(editor, element),
             _ => {} // Unknown man_made type, ignore
+        }
+    }
+}
+
+/// Dispatch `man_made=*` MULTIPOLYGON relations.
+///
+/// Most `man_made` features are ways or nodes, but some — notably large
+/// `man_made=pier` decks (e.g. Hudson River Park Pier 25/26) — are encoded
+/// as `type=multipolygon` relations whose outer-role member ways are open
+/// fragments of a single perimeter ring. The way-level `generate_man_made`
+/// only matches `ProcessedElement::Way`, so these relations rendered nothing,
+/// leaving lidar-elevated deck pads surfaced as bare sand/water at the fringe.
+pub fn generate_man_made_from_relation(
+    editor: &mut WorldEditor,
+    rel: &ProcessedRelation,
+    _args: &Args,
+) {
+    // Respect `layer`/`level` semantics exactly as the way-level path does:
+    // skip anything routed below ground.
+    if let Some(layer) = rel.tags.get("layer") {
+        if layer.parse::<i32>().unwrap_or(0) < 0 {
+            return;
+        }
+    }
+    if let Some(level) = rel.tags.get("level") {
+        if level.parse::<i32>().unwrap_or(0) < 0 {
+            return;
+        }
+    }
+
+    if rel.tags.get("man_made").map(|s| s.as_str()) == Some("pier") {
+        generate_pier_from_relation(editor, rel);
+    }
+}
+
+/// Render a `man_made=pier` multipolygon relation as a filled deck.
+///
+/// The outer-role member ways are assembled into closed rings using the same
+/// pattern as `water_areas::generate_water_areas_from_relation`
+/// (`merge_way_segments` + closed-ring verification), then each ring's interior
+/// is flood-filled with the same pier deck (OAK_SLAB at ground+1) and support
+/// pillars that the way-level `generate_pier` produces.
+fn generate_pier_from_relation(editor: &mut WorldEditor, rel: &ProcessedRelation) {
+    let mut outers: Vec<Vec<ProcessedNode>> = vec![];
+    for mem in &rel.members {
+        if mem.role == ProcessedMemberRole::Outer {
+            outers.push(mem.way.nodes.clone());
+        }
+    }
+    if outers.is_empty() {
+        return;
+    }
+
+    // Chain the open perimeter fragments into closed rings.
+    super::merge_way_segments(&mut outers);
+
+    for ring in &outers {
+        if ring.len() < 4 {
+            continue;
+        }
+        // flood_fill_area rejects open polylines (requires first == last);
+        // close the ring if merging left it within tolerance, mirroring the
+        // water-area relation handling.
+        let mut coords: Vec<(i32, i32)> = ring.iter().map(|n| (n.x, n.z)).collect();
+        let first = coords[0];
+        let last = *coords.last().unwrap();
+        if first != last {
+            let dx = (first.0 - last.0).abs();
+            let dz = (first.1 - last.1).abs();
+            if dx <= 1 && dz <= 1 {
+                coords.push(first);
+            } else {
+                // Not closeable within tolerance — skip rather than fabricate
+                // a long straight closing edge across the river.
+                println!("Skipping pier relation {} due to invalid polygon", rel.id);
+                continue;
+            }
+        }
+
+        let filled = flood_fill_area(&coords, None);
+        for &(x, z) in &filled {
+            // Deck one block above the (lidar-elevated) ground, same as the
+            // way-pier deck height.
+            editor.set_block(OAK_SLAB, x, 1, z, None, None);
+            // Sparse support pillars on a 4-block grid, dropped from the deck.
+            if x % 4 == 0 && z % 4 == 0 {
+                editor.set_block(OAK_LOG, x, 0, z, None, None);
+            }
         }
     }
 }
@@ -519,6 +610,140 @@ pub fn generate_man_made_nodes(editor: &mut WorldEditor, node: &ProcessedNode, a
             }
             "mast" => generate_antenna(editor, &element),
             _ => {} // Unknown man_made type, ignore
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coordinate_system::cartesian::XZBBox;
+    use crate::ground::Ground;
+    use crate::osm_parser::ProcessedMember;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    const TW: usize = 17; // 17×17 world, blocks 0..=16, 1:1 grid↔world
+
+    fn node(id: u64, x: i32, z: i32) -> ProcessedNode {
+        ProcessedNode {
+            id,
+            tags: HashMap::new(),
+            x,
+            z,
+        }
+    }
+
+    fn flat_ground() -> Arc<Ground> {
+        // Flat Y10 ground, arbitrary land-cover class everywhere.
+        Arc::new(Ground::new_synthetic(
+            vec![vec![10.0; TW]; TW],
+            vec![vec![30u8; TW]; TW],
+        ))
+    }
+
+    fn test_args() -> Args {
+        use clap::Parser;
+        let tmpdir = std::env::temp_dir();
+        let cmd = [
+            "arnis",
+            "--output-dir",
+            tmpdir.to_str().unwrap(),
+            "--bbox",
+            "1,2,3,4",
+        ];
+        Args::parse_from(cmd.iter())
+    }
+
+    fn new_editor<'a>(xzbbox: &'a XZBBox, ground: &Arc<Ground>) -> WorldEditor<'a> {
+        let mut editor = WorldEditor::new(
+            PathBuf::from("/tmp/arnis-man-made-test"),
+            xzbbox,
+            crate::coordinate_system::geographic::LLBBox::new(0.0, 0.0, 0.001, 0.001).unwrap(),
+        );
+        editor.set_ground(Arc::clone(ground));
+        editor
+    }
+
+    /// A `man_made=pier` multipolygon relation whose square deck perimeter
+    /// (blocks [2,14]²) is split across FOUR open outer-role member ways —
+    /// exactly the Pier 25 encoding (4 outer fragments chaining into one ring).
+    fn pier_relation(tags: HashMap<String, String>) -> ProcessedRelation {
+        // Shared corner node IDs so adjacent fragments chain end-to-end.
+        let c0 = node(100, 2, 2);
+        let c1 = node(101, 14, 2);
+        let c2 = node(102, 14, 14);
+        let c3 = node(103, 2, 14);
+        let frag = |id: u64, a: &ProcessedNode, b: &ProcessedNode| ProcessedMember {
+            role: ProcessedMemberRole::Outer,
+            way: Arc::new(ProcessedWay {
+                id,
+                nodes: vec![a.clone(), b.clone()],
+                tags: HashMap::new(),
+            }),
+        };
+        ProcessedRelation {
+            id: 20784500,
+            tags,
+            members: vec![
+                frag(1, &c0, &c1),
+                frag(2, &c1, &c2),
+                frag(3, &c2, &c3),
+                frag(4, &c3, &c0),
+            ],
+        }
+    }
+
+    fn pier_tags() -> HashMap<String, String> {
+        let mut tags = HashMap::new();
+        tags.insert("man_made".to_string(), "pier".to_string());
+        tags.insert("type".to_string(), "multipolygon".to_string());
+        tags
+    }
+
+    /// Probe coordinates well inside the deck polygon interior.
+    const INTERIOR: &[(i32, i32)] = &[(8, 8), (5, 5), (11, 11), (8, 5), (5, 11)];
+
+    /// RED-first acceptance: a `man_made=pier` multipolygon relation must lay a
+    /// deck (OAK_SLAB at ground+1) across its polygon interior. Before the fix
+    /// the relation dispatched to the way-only `generate_pier` and rendered
+    /// nothing here.
+    #[test]
+    fn pier_relation_renders_deck_blocks_inside_polygon() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = flat_ground();
+        let mut editor = new_editor(&xzbbox, &ground);
+        let rel = pier_relation(pier_tags());
+
+        generate_man_made_from_relation(&mut editor, &rel, &test_args());
+
+        for &(x, z) in INTERIOR {
+            assert!(
+                editor.check_for_block(x, 1, z, Some(&[OAK_SLAB])),
+                "pier relation must lay an OAK_SLAB deck at interior ({x},{z})"
+            );
+        }
+    }
+
+    /// A pier relation routed below ground (`layer=-1`) must render nothing,
+    /// matching the way-level `generate_man_made` layer guard.
+    #[test]
+    fn pier_relation_negative_layer_renders_nothing() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = flat_ground();
+        let mut editor = new_editor(&xzbbox, &ground);
+        let mut tags = pier_tags();
+        tags.insert("layer".to_string(), "-1".to_string());
+        let rel = pier_relation(tags);
+
+        generate_man_made_from_relation(&mut editor, &rel, &test_args());
+
+        for &(x, z) in INTERIOR {
+            assert!(
+                !editor.check_for_block(x, 1, z, Some(&[OAK_SLAB])),
+                "negative-layer pier relation must not lay deck at ({x},{z})"
+            );
         }
     }
 }

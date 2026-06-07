@@ -5,6 +5,7 @@ use crate::deterministic_rng::element_rng;
 use crate::element_processing::surfaces::get_blocks_for_surface;
 use crate::element_processing::tree::Tree;
 use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache};
+use crate::land_cover_osm_water_override::has_explicit_water_tag;
 use crate::osm_parser::{ProcessedMemberRole, ProcessedRelation, ProcessedWay};
 use crate::world_editor::WorldEditor;
 use rand::Rng;
@@ -17,6 +18,24 @@ pub fn generate_leisure(
     building_footprints: &BuildingFootprintBitmap,
 ) {
     if let Some(leisure_type) = element.tags.get("leisure") {
+        // OSM way 53865549 carries BOTH `leisure=marina` AND `water=lake`.
+        // The `water` tag gives it water-priority in the element sort, so it
+        // ran BEFORE the basin water relation, but it dispatches here, where
+        // `marina` is unmatched and falls through to `_ => GRASS_BLOCK`,
+        // painting the whole basin with grass at the waterline. The water
+        // relation's v5 no-overwrite scanline then (correctly) refused to fill
+        // water over that grass. An element that ALSO carries a `water=*` tag
+        // IS a water body per OSM semantics — the water generators own its
+        // surface, so we must not paint a land default over it here. The only
+        // leisure values this function itself renders as actual WATER
+        // (swimming_pool / swimming_area) keep their behaviour: painting water
+        // over a water-tagged pool is intended and harmless.
+        if has_explicit_water_tag(&element.tags)
+            && !matches!(leisure_type.as_str(), "swimming_pool" | "swimming_area")
+        {
+            return;
+        }
+
         let mut previous_node: Option<(i32, i32)> = None;
         let mut corner_addup: (i32, i32, i32) = (0, 0, 0);
         let mut current_leisure: Vec<(i32, i32)> = vec![];
@@ -202,5 +221,182 @@ pub fn generate_leisure_from_relation(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block_definitions::GRASS_BLOCK;
+    use crate::coordinate_system::cartesian::XZBBox;
+    use crate::ground::Ground;
+    use crate::osm_parser::ProcessedNode;
+    use clap::Parser;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    const TW: usize = 17; // 17×17 world, blocks 0..=16, 1:1 grid↔world
+
+    fn node(x: i32, z: i32) -> ProcessedNode {
+        ProcessedNode {
+            id: 0,
+            tags: HashMap::new(),
+            x,
+            z,
+        }
+    }
+
+    fn flat_ground() -> Arc<Ground> {
+        // Flat Y10 ground, arbitrary land-cover class everywhere.
+        Arc::new(Ground::new_synthetic(
+            vec![vec![10.0; TW]; TW],
+            vec![vec![30u8; TW]; TW],
+        ))
+    }
+
+    /// Minimal valid Args for element processing (Java, dummy bbox/output).
+    fn test_args() -> Args {
+        let tmpdir = std::env::temp_dir();
+        let cmd = [
+            "arnis",
+            "--output-dir",
+            tmpdir.to_str().unwrap(),
+            "--bbox",
+            "1,2,3,4",
+        ];
+        Args::parse_from(cmd.iter())
+    }
+
+    fn new_editor<'a>(xzbbox: &'a XZBBox, ground: &Arc<Ground>) -> WorldEditor<'a> {
+        let mut editor = WorldEditor::new(
+            PathBuf::from("/tmp/arnis-leisure-test"),
+            xzbbox,
+            crate::coordinate_system::geographic::LLBBox::new(0.0, 0.0, 0.001, 0.001).unwrap(),
+        );
+        editor.set_ground(Arc::clone(ground));
+        editor
+    }
+
+    /// Closed square polygon covering blocks [2,14]² with the given tags.
+    fn closed_square(tags: HashMap<String, String>) -> ProcessedWay {
+        ProcessedWay {
+            id: 1,
+            nodes: vec![node(2, 2), node(14, 2), node(14, 14), node(2, 14), node(2, 2)],
+            tags,
+        }
+    }
+
+    /// Probe coordinates well inside the polygon interior.
+    const PROBES: &[(i32, i32)] = &[(8, 8), (5, 5), (11, 11), (8, 5), (5, 11)];
+
+    /// Morris Canal Basin class: a closed `leisure=marina` + `water=lake`
+    /// polygon must paint NOTHING here — the element is a water body per OSM
+    /// semantics and the water generators own its surface. (Pre-fix this
+    /// painted GRASS_BLOCK across the whole interior at the waterline.)
+    #[test]
+    fn marina_with_water_tag_paints_nothing() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = flat_ground();
+        let mut editor = new_editor(&xzbbox, &ground);
+        let mut tags = HashMap::new();
+        tags.insert("leisure".to_string(), "marina".to_string());
+        tags.insert("water".to_string(), "lake".to_string());
+        let way = closed_square(tags);
+        let cache = FloodFillCache::new();
+        let footprints = BuildingFootprintBitmap::new_empty();
+        let args = test_args();
+
+        generate_leisure(&mut editor, &way, &args, &cache, &footprints);
+
+        for &(x, z) in PROBES {
+            // No block of any kind should have been written at the waterline.
+            // Resolve the waterline from the ground (y-offset 0) instead of
+            // hardcoding the synthetic ground Y, so this stays correct if the
+            // fixture's ground height ever changes.
+            let waterline_y = editor.get_absolute_y(x, 0, z);
+            assert!(
+                !editor.block_exists_absolute(x, waterline_y, z),
+                "marina+water polygon must not paint anything at interior ({x},{z}); \
+                 the water generators own this surface"
+            );
+            assert!(
+                !editor.check_for_block(x, 0, z, Some(&[GRASS_BLOCK])),
+                "marina+water polygon must not paint GRASS_BLOCK at ({x},{z})"
+            );
+        }
+    }
+
+    /// Guard must NOT over-fire: a plain `leisure=park` way (no water tag)
+    /// still paints grass as before.
+    #[test]
+    fn park_without_water_still_paints_grass() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = flat_ground();
+        let mut editor = new_editor(&xzbbox, &ground);
+        let mut tags = HashMap::new();
+        tags.insert("leisure".to_string(), "park".to_string());
+        let way = closed_square(tags);
+        let cache = FloodFillCache::new();
+        let footprints = BuildingFootprintBitmap::new_empty();
+        let args = test_args();
+
+        generate_leisure(&mut editor, &way, &args, &cache, &footprints);
+
+        // At least the central interior cell must be grass.
+        assert!(
+            editor.check_for_block(8, 0, 8, Some(&[GRASS_BLOCK])),
+            "plain leisure=park must still paint GRASS_BLOCK in its interior"
+        );
+    }
+
+    /// The guard must not break leisure values that this function renders as
+    /// actual WATER: a `leisure=swimming_pool` + `water=*` polygon keeps
+    /// painting water (the water generators do not own a stand-alone pool).
+    #[test]
+    fn swimming_pool_with_water_tag_still_paints_water() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = flat_ground();
+        let mut editor = new_editor(&xzbbox, &ground);
+        let mut tags = HashMap::new();
+        tags.insert("leisure".to_string(), "swimming_pool".to_string());
+        tags.insert("water".to_string(), "pool".to_string());
+        let way = closed_square(tags);
+        let cache = FloodFillCache::new();
+        let footprints = BuildingFootprintBitmap::new_empty();
+        let args = test_args();
+
+        generate_leisure(&mut editor, &way, &args, &cache, &footprints);
+
+        assert!(
+            editor.check_for_block(8, 0, 8, Some(&[WATER])),
+            "leisure=swimming_pool with a water tag must still paint WATER"
+        );
+    }
+
+    /// Negation-aware: `water=no` is NOT a water body, so the guard must not
+    /// fire. A `leisure=marina` + `water=no` polygon still paints grass like a
+    /// plain marina would.
+    #[test]
+    fn marina_with_water_no_still_paints_grass() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = flat_ground();
+        let mut editor = new_editor(&xzbbox, &ground);
+        let mut tags = HashMap::new();
+        tags.insert("leisure".to_string(), "marina".to_string());
+        tags.insert("water".to_string(), "no".to_string());
+        let way = closed_square(tags);
+        let cache = FloodFillCache::new();
+        let footprints = BuildingFootprintBitmap::new_empty();
+        let args = test_args();
+
+        generate_leisure(&mut editor, &way, &args, &cache, &footprints);
+
+        // The negated water tag must NOT trip the water guard.
+        assert!(
+            editor.check_for_block(8, 0, 8, Some(&[GRASS_BLOCK])),
+            "leisure=marina with water=no must still paint GRASS_BLOCK (guard \
+             must not fire on a negated water tag)"
+        );
     }
 }
