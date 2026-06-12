@@ -16,6 +16,19 @@ pub fn generate_natural(
     building_footprints: &BuildingFootprintBitmap,
 ) {
     if let Some(natural_type) = element.tags().get("natural") {
+        // Water-NAMING features (strait/bay/sound/fjord — centerline ways
+        // and sea-area labels) are not physical geometry. Without this guard
+        // the unmatched default below would bresenham a grass ridge along the
+        // centerline (defense-in-depth; the LargeSizedTest 2026-06-07 artifact
+        // has a separate root cause under active investigation). Water surfaces
+        // are owned by the water generators; natural=bay RELATIONS never reach
+        // here (water-routed in data_processing.rs:333-346). natural=strait/
+        // sound/fjord relations do reach generate_natural_from_relation but
+        // are caught by this same guard. Closed polygons are also suppressed.
+        // natural=cape is LAND — deliberately not in this list.
+        if matches!(natural_type.as_str(), "strait" | "bay" | "sound" | "fjord") {
+            return;
+        }
         if natural_type == "tree" {
             if let ProcessedElement::Node(node) = element {
                 let x: i32 = node.x;
@@ -685,5 +698,150 @@ fn vary_rock_block(base: Block, x: i32, z: i32) -> Block {
             _ => GRAVEL,
         },
         _ => base,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block_definitions::GRASS_BLOCK;
+    use crate::coordinate_system::cartesian::XZBBox;
+    use crate::ground::Ground;
+    use crate::osm_parser::ProcessedNode;
+    use clap::Parser;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    const TW: usize = 17; // 17×17 world, blocks 0..=16, 1:1 grid↔world
+
+    fn node(x: i32, z: i32) -> ProcessedNode {
+        ProcessedNode {
+            id: 0,
+            tags: HashMap::new(),
+            x,
+            z,
+        }
+    }
+
+    fn flat_ground() -> Arc<Ground> {
+        // Flat Y10 ground, arbitrary land-cover class everywhere.
+        Arc::new(Ground::new_synthetic(
+            vec![vec![10.0; TW]; TW],
+            vec![vec![30u8; TW]; TW],
+        ))
+    }
+
+    /// Minimal valid Args for element processing (Java, dummy bbox/output).
+    fn test_args() -> Args {
+        let tmpdir = std::env::temp_dir();
+        let cmd = [
+            "arnis",
+            "--output-dir",
+            tmpdir.to_str().unwrap(),
+            "--bbox",
+            "1,2,3,4",
+        ];
+        Args::parse_from(cmd.iter())
+    }
+
+    fn new_editor<'a>(xzbbox: &'a XZBBox, ground: &Arc<Ground>) -> WorldEditor<'a> {
+        let mut editor = WorldEditor::new(
+            PathBuf::from("/tmp/arnis-natural-test"),
+            xzbbox,
+            crate::coordinate_system::geographic::LLBBox::new(0.0, 0.0, 0.001, 0.001).unwrap(),
+        );
+        editor.set_ground(Arc::clone(ground));
+        editor
+    }
+
+    /// Closed square polygon covering blocks [2,14]² with the given tags.
+    fn closed_square(tags: HashMap<String, String>) -> ProcessedWay {
+        ProcessedWay {
+            id: 1,
+            nodes: vec![node(2, 2), node(14, 2), node(14, 14), node(2, 14), node(2, 2)],
+            tags,
+        }
+    }
+
+    /// A 2-node OPEN way (distinct endpoints, NOT closed) with the given tags.
+    /// natural.rs has no open-way builder; this is the centerline analogue of a
+    /// linear NAMING feature like `natural=strait`.
+    fn open_line(tags: HashMap<String, String>, from: (i32, i32), to: (i32, i32)) -> ProcessedWay {
+        ProcessedWay {
+            id: 2,
+            nodes: vec![node(from.0, from.1), node(to.0, to.1)],
+            tags,
+        }
+    }
+
+    /// `natural=strait` centerline ways (East River / Hell Gate, the
+    /// LargeSizedTest 2026-06-07 regression) are linear NAMING features, never
+    /// physical geometry. Pre-fix they fell to `_ => GRASS_BLOCK` and were
+    /// bresenham-drawn node-to-node, painting a 1-block grass ridge for miles.
+    /// After the guard they must paint NOTHING along the centerline.
+    #[test]
+    fn strait_centerline_way_paints_nothing() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = flat_ground();
+        let mut editor = new_editor(&xzbbox, &ground);
+        let mut tags = HashMap::new();
+        tags.insert("natural".to_string(), "strait".to_string());
+        tags.insert("name".to_string(), "East River".to_string());
+        // Diagonal open way across the interior.
+        let way = open_line(tags, (2, 2), (14, 14));
+        let cache = FloodFillCache::new();
+        let footprints = BuildingFootprintBitmap::new_empty();
+        let args = test_args();
+
+        generate_natural(
+            &mut editor,
+            &ProcessedElement::Way(way),
+            &args,
+            &cache,
+            &footprints,
+        );
+
+        // Probe every cell on the diagonal centerline: no block of any kind.
+        for i in 2..=14 {
+            let waterline_y = editor.get_absolute_y(i, 0, i);
+            assert!(
+                !editor.block_exists_absolute(i, waterline_y, i),
+                "natural=strait centerline must not paint anything at ({i},{i}); \
+                 water-naming features are labels, not geometry"
+            );
+            assert!(
+                !editor.check_for_block(i, 0, i, Some(&[GRASS_BLOCK])),
+                "natural=strait centerline must not paint GRASS_BLOCK at ({i},{i})"
+            );
+        }
+    }
+
+    /// Guard must NOT over-fire: a closed `natural=scrub` square still paints
+    /// GRASS_BLOCK in its interior (scrub is a matched value, not water-naming).
+    #[test]
+    fn scrub_way_still_paints_grass() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(16.0, 16.0).unwrap();
+        let ground = flat_ground();
+        let mut editor = new_editor(&xzbbox, &ground);
+        let mut tags = HashMap::new();
+        tags.insert("natural".to_string(), "scrub".to_string());
+        let way = closed_square(tags);
+        let cache = FloodFillCache::new();
+        let footprints = BuildingFootprintBitmap::new_empty();
+        let args = test_args();
+
+        generate_natural(
+            &mut editor,
+            &ProcessedElement::Way(way),
+            &args,
+            &cache,
+            &footprints,
+        );
+
+        assert!(
+            editor.check_for_block(8, 0, 8, Some(&[GRASS_BLOCK])),
+            "closed natural=scrub must still paint GRASS_BLOCK in its interior"
+        );
     }
 }
