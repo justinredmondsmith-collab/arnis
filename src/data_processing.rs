@@ -395,7 +395,7 @@ pub fn generate_world_with_options(
         &building_footprints,
     )?;
 
-    if args.fillground {
+    if args.fillground && !args.no_ores {
         crate::ore_generation::generate_ores(&mut editor, &xzbbox);
     }
 

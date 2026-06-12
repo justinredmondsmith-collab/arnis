@@ -60,6 +60,11 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub fillground: bool,
 
+    /// Skip random ore-vein generation in --fillground stone (the arnis-tiler
+    /// geology stage owns subsurface composition; see geology-replan.md).
+    #[arg(long = "no-ores", default_value_t = false)]
+    pub no_ores: bool,
+
     /// Enable land cover classification (optional)
     /// When enabled, fetches ESA WorldCover satellite data to classify terrain
     /// (forests, deserts, wetlands, built-up areas, etc.) and select appropriate
@@ -474,6 +479,46 @@ mod tests {
         assert!(args.should_skip_railway("subway"));
         assert!(args.should_skip_railway("tram"));
         assert!(args.should_skip_railway("anything_else"));
+    }
+
+    #[test]
+    fn test_no_ores_flag() {
+        let tmpdir = tempfile::tempdir().unwrap();
+        let tmp_path = tmpdir.path().to_str().unwrap();
+
+        // Default is false — absent flag preserves legacy ore generation
+        // byte-identically (the fork serves non-geology builds too).
+        let cmd = ["arnis", "--output-dir", tmp_path, "--bbox", "1,2,3,4"];
+        let args = Args::parse_from(cmd.iter());
+        assert!(!args.no_ores);
+
+        // --no-ores alongside --fillground: stone fill stays, veins suppressed.
+        let cmd = [
+            "arnis",
+            "--output-dir",
+            tmp_path,
+            "--bbox",
+            "1,2,3,4",
+            "--fillground",
+            "--no-ores",
+        ];
+        let args = Args::parse_from(cmd.iter());
+        assert!(args.fillground);
+        assert!(args.no_ores);
+
+        // --no-ores without --fillground parses fine (it simply has
+        // nothing to suppress; the gate lives at the fillground call site).
+        let cmd = [
+            "arnis",
+            "--output-dir",
+            tmp_path,
+            "--bbox",
+            "1,2,3,4",
+            "--no-ores",
+        ];
+        let args = Args::parse_from(cmd.iter());
+        assert!(!args.fillground);
+        assert!(args.no_ores);
     }
 
     #[test]
