@@ -390,6 +390,14 @@ impl Ground {
         min_y
     }
 
+    /// Sea level / water datum (the `--ground-level`, raised to the deepest-carve
+    /// floor on the elevation path). Used by the OSM-scoped perched-water clamp in
+    /// ground generation to reject ESA water films perched on above-sea land.
+    #[inline(always)]
+    pub fn sea_level(&self) -> i32 {
+        self.ground_level
+    }
+
     #[allow(unused)]
     #[inline(always)]
     pub fn min_level<I: Iterator<Item = XZPoint>>(&self, coords: I) -> Option<i32> {
