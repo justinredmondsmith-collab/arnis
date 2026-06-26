@@ -366,33 +366,46 @@ impl Ground {
         }
         // Check if terrain is steep here; if flat, no snapping needed
         let slope = self.slope(coord);
-        if slope <= 2 {
-            return center;
-        }
-        // On steep terrain, find the minimum elevation in a small radius
-        // to snap water to the canyon/valley floor
-        let mut min_y = center;
-        for r in 1..=3i32 {
-            for &(dx, dz) in &[
-                (-r, 0),
-                (r, 0),
-                (0, -r),
-                (0, r),
-                (-r, -r),
-                (-r, r),
-                (r, -r),
-                (r, r),
-            ] {
-                let neighbor = self.level(XZPoint::new(coord.x + dx, coord.z + dz));
-                min_y = min_y.min(neighbor);
+        let surface = if slope <= 2 {
+            center
+        } else {
+            // On steep terrain, find the minimum elevation in a small radius
+            // to snap water to the canyon/valley floor
+            let mut min_y = center;
+            for r in 1..=3i32 {
+                for &(dx, dz) in &[
+                    (-r, 0),
+                    (r, 0),
+                    (0, -r),
+                    (0, r),
+                    (-r, -r),
+                    (-r, r),
+                    (r, -r),
+                    (r, r),
+                ] {
+                    let neighbor = self.level(XZPoint::new(coord.x + dx, coord.z + dz));
+                    min_y = min_y.min(neighbor);
+                }
             }
-        }
-        min_y
+            min_y
+        };
+        // SEA-LEVEL CLAMP (perched-water root fix, 2026-06-25). Never report a water
+        // surface above sea level (`self.ground_level` = the --ground-level / water
+        // datum, Y10). A water-classified cell whose land top is ABOVE the waterline is
+        // an ESA/DEM false positive (low islands like Liberty, at-waterline shoreline);
+        // every water-placement gate (`ground_y <= water_level`) then perches a 1-block
+        // film on the land because water_level == ground_y on flat terrain. Clamping
+        // HERE fixes ALL three placement sites at once — the ESA film, the OSM scanline
+        // (via editor.get_water_level), and carve_lc_water_pass — since each compares
+        // ground_y against this value. Below-sea water (the harbor, carved marina basins)
+        // has water_level <= sea so it is untouched; only above-sea water is suppressed.
+        // (Genuine above-sea NAMED water — rare; none in the harbor — would need a future
+        // HIGH_ELEVATION exception; tracked separately.)
+        surface.min(self.ground_level)
     }
 
-    /// Sea level / water datum (the `--ground-level`, raised to the deepest-carve
-    /// floor on the elevation path). Used by the OSM-scoped perched-water clamp in
-    /// ground generation to reject ESA water films perched on above-sea land.
+    /// Sea level / water datum (the `--ground-level`, raised to the deepest-carve floor
+    /// on the elevation path). Exposed for diagnostics / future above-sea-water guards.
     #[inline(always)]
     pub fn sea_level(&self) -> i32 {
         self.ground_level

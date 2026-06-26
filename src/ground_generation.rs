@@ -345,23 +345,16 @@ pub fn generate_ground_layer(
                         let mut place_esa_water = false;
                         if is_esa_water && !steep_override {
                             // Snap water to local minimum on steep terrain to compensate
-                            // for ESA/DEM spatial misalignment in canyons
+                            // for ESA/DEM spatial misalignment in canyons. NOTE: the
+                            // sea-level clamp lives in ground.water_level() so it covers
+                            // ALL water placement sites at once (this ESA film, the OSM
+                            // scanline via editor.get_water_level, and carve_lc_water_pass)
+                            // — it returns at most sea_level, so this gate `ground_y <= wy`
+                            // rejects above-sea land (ground_y > sea).
                             let wy = ground.water_level(coord);
-                            // OSM-SCOPED SEA-LEVEL CLAMP (perched-water root fix,
-                            // 2026-06-25). A PURE-ESA water cell (not OSM natural=water)
-                            // whose land top is ABOVE sea level is an ESA/DEM false
-                            // positive — low islands (Liberty) + at-waterline shoreline.
-                            // The old `ground_y <= wy` gate is `ground_y <= ground_y` on
-                            // flat land → always true → a 1-block water FILM perched on
-                            // the above-sea land. Skip those. OSM natural=water
-                            // (placed_water/osm_gap = intentional named water: canals,
-                            // marina basins) is NEVER clamped, so legit above-sea water
-                            // is preserved.
-                            let is_osm_water = placed_water || osm_gap;
-                            let esa_above_sea = !is_osm_water && wy > ground.sea_level();
                             // Skip columns that sit above the water surface to avoid
-                            // buried water pockets inside slopes (original guard).
-                            if ground_y <= wy && !esa_above_sea {
+                            // buried water pockets inside slopes.
+                            if ground_y <= wy {
                                 water_y = wy;
                                 place_esa_water = true;
                             }
