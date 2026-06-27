@@ -3726,6 +3726,32 @@ fn generate_floors_and_ceilings(
 
         let is_passage = building_passages.contains(x, z);
 
+        // Foundation fill below interior floor cells. The perimeter wall ring
+        // (build_wall_ring) fills foundation pillars from terrain up to the
+        // floor, but INTERIOR columns over lower terrain were left with an air
+        // gap of height (start_y_offset - ground_y - 1): buildings whose
+        // footprint spans uneven terrain "floated" with daylight under their
+        // edges (the floor is a flat slab at start_y_offset = the footprint-max
+        // terrain). Mirror the perimeter loop per interior cell so the
+        // foundation is solid across the whole footprint. An empty range
+        // (interior terrain at/above the floor) fills nothing, so this never
+        // disturbs flat-ground buildings.
+        if args.terrain && config.is_ground_level && !is_passage {
+            let local_ground_level = if let Some(ground) = editor.get_ground() {
+                ground.level(XZPoint::new(
+                    x - editor.get_min_coords().0,
+                    z - editor.get_min_coords().1,
+                ))
+            } else {
+                args.ground_level
+            };
+
+            for y in local_ground_level..config.start_y_offset {
+                let block = apply_block_variety(config.wall_block, x, y, z, config);
+                editor.set_block_absolute(block, x, y + config.abs_terrain_offset, z, None, None);
+            }
+        }
+
         // Set ground floor - skip in passage zones (the road surface is placed
         // by the highway processor instead).
         if !is_passage {
