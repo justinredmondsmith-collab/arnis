@@ -587,24 +587,34 @@ mod tests {
 
     /// Genuine sub-waterline water: the renderer painted the water surface, so
     /// the carve must deepen it to the full field depth (guards against a
-    /// FIX-D-style regression that wipes real bathymetry). Must pass BEFORE
-    /// and AFTER the gate fix.
+    /// FIX-D-style regression that wipes real bathymetry).
+    ///
+    /// Under the sea-level clamp (`water_level = surface.min(ground_level)`,
+    /// ground_level == 0 in `new_synthetic`) a GENUINE water cell must sit AT
+    /// or BELOW the sea datum, otherwise the clamp correctly suppresses it as
+    /// an above-sea false positive. Land at the datum (Y0) models real harbor
+    /// water — surface at sea level, bed carved below — so `water_level == 0`,
+    /// the clamp is a no-op, the painted surface == water_level, and the carve
+    /// deepens from Y0 down into negative Y. (Using the stale Y8 land made the
+    /// cell 8 blocks above the datum, so the clamp suppressed the carve.)
     #[test]
     fn carve_keeps_genuine_subwaterline_water() {
         let xzbbox = test_bbox();
         let ground = Arc::new(Ground::new_synthetic(
-            flat_heights(8.0),
+            flat_heights(0.0),
             lc_with_water_at(&[(8, 8)]),
         ));
         let mut editor = make_editor(&xzbbox, &ground);
-        // Film pass pre-paint: water surface at this cell's water_level (Y8).
-        editor.set_block_absolute(WATER, 8, 8, 8, None, Some(&[]));
+        // Film pass pre-paint: water surface at this cell's water_level (Y0,
+        // the sea datum — at/below it, so the clamp is a no-op and this is a
+        // genuine sub-waterline column, not a suppressed above-sea cell).
+        editor.set_block_absolute(WATER, 8, 0, 8, None, Some(&[]));
         let bwf = uniform_field(&xzbbox, 3);
         let road_mask = RoadMaskBitmap::new_empty();
 
         carve_lc_water_pass(&mut editor, &ground, &xzbbox, &bwf, &road_mask);
 
-        for y in [8, 7, 6, 5] {
+        for y in [0, -1, -2, -3] {
             assert!(
                 has_water_at(&editor, 8, y, 8),
                 "genuine water column must be carved to full depth (missing water at Y{y})"
@@ -612,8 +622,8 @@ mod tests {
         }
         // Bed below the carve: present and not water.
         assert!(
-            editor.block_exists_absolute(8, 4, 8) && !has_water_at(&editor, 8, 4, 8),
-            "carved column must end in a solid bed at Y4"
+            editor.block_exists_absolute(8, -4, 8) && !has_water_at(&editor, 8, -4, 8),
+            "carved column must end in a solid bed at Y-4"
         );
     }
 
