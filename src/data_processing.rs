@@ -342,6 +342,7 @@ fn process_element(
                     road_mask,
                     building_footprints,
                     rail_mask,
+                    args.skip_railways.as_ref(),
                 );
             } else if way.tags.contains_key("roller_coaster") {
                 railways::generate_roller_coaster(editor, way);
@@ -517,6 +518,7 @@ pub fn generate_world_with_options(
 ) -> Result<PathBuf, String> {
     let output_path = options.path.clone();
     let world_format = options.format;
+    let external_tile = ground.is_external_tile();
     let generation_start = args.benchmark.then(std::time::Instant::now);
 
     // Create editor with appropriate format
@@ -543,21 +545,22 @@ pub fn generate_world_with_options(
             args.disable_height_limit,
         )
     };
+    editor.set_external_tile(external_tile);
     editor.set_bake_lighting(args.bake_lighting);
     editor.set_place_schematics(args.use_3d);
     editor.set_game_settings(args.gamemode, args.world_time);
     editor.set_start_with_map(args.map_item);
-    editor.set_map_decals(world_format == WorldFormat::JavaAnvil);
+    editor.set_map_decals(world_format == WorldFormat::JavaAnvil && !external_tile);
     editor.set_projection_info(&args.projection.to_string(), args.scale);
 
     // Signage pre-pass: every decal the world needs gets its map id now, so the tile
     // threads only read the registry. Java only; other formats keep banner fallbacks.
     let signage_start = args.benchmark.then(std::time::Instant::now);
-    let signage_ctx: Option<Arc<signage::SignageContext>> = (world_format
-        == WorldFormat::JavaAnvil)
-        .then(|| signage::build_context(&elements, args, llbbox, &xzbbox))
-        .flatten()
-        .map(Arc::new);
+    let signage_ctx: Option<Arc<signage::SignageContext>> =
+        (world_format == WorldFormat::JavaAnvil && !external_tile)
+            .then(|| signage::build_context(&elements, args, llbbox, &xzbbox))
+            .flatten()
+            .map(Arc::new);
     if let (Some(t), Some(_)) = (signage_start, signage_ctx.as_ref()) {
         eprintln!("[BENCHMARK] signage_prepass_ms={}", t.elapsed().as_millis());
     }
@@ -577,14 +580,18 @@ pub fn generate_world_with_options(
     });
 
     // Map preview accumulator, fed as regions are saved/flushed (Java/Bedrock).
-    let preview_epoch = map_preview::begin_preview_epoch();
+    let preview_epoch = if external_tile {
+        0
+    } else {
+        map_preview::begin_preview_epoch()
+    };
     // The map item consumes the same accumulator, so either feature enables it.
     // Without the PNG the map item only needs 128px, so a small frame suffices
     // (512 = 4x supersampling) instead of the full-resolution preview buffer.
-    let wants_map_item = args.map_item && world_format == WorldFormat::JavaAnvil;
+    let wants_map_item = args.map_item && world_format == WorldFormat::JavaAnvil && !external_tile;
     // Branding map ships on every Java world.
-    let place_branding = world_format == WorldFormat::JavaAnvil;
-    let wants_png = args.map_preview && world_format != WorldFormat::LuantiWorld;
+    let place_branding = world_format == WorldFormat::JavaAnvil && !external_tile;
+    let wants_png = args.map_preview && world_format != WorldFormat::LuantiWorld && !external_tile;
     let preview = (wants_png || wants_map_item || wants_local_maps).then(|| {
         Arc::new(if wants_png {
             PreviewAccumulator::new(&xzbbox)
@@ -675,10 +682,11 @@ pub fn generate_world_with_options(
         bridges::BridgeSurfaceMap::build(&elements, &bridge_structures, args.scale);
 
     let rail_bridge_internal_endpoints =
-        railways::collect_rail_bridge_internal_endpoints(&elements);
+        railways::collect_rail_bridge_internal_endpoints(&elements, args.skip_railways.as_ref());
 
     // Rail centerlines, used to keep catenary masts off neighbouring tracks.
-    let rail_mask = railways::collect_at_grade_rail_mask(&elements, &xzbbox);
+    let rail_mask =
+        railways::collect_at_grade_rail_mask(&elements, &xzbbox, args.skip_railways.as_ref());
 
     let tunnel_internal_endpoints = highways::collect_tunnel_internal_endpoints(&elements, &xzbbox);
 
@@ -690,7 +698,12 @@ pub fn generate_world_with_options(
         &xzbbox,
         args.scale,
     );
-    railways::add_tunnel_footprint(&elements, &xzbbox, &mut tunnel_footprint);
+    railways::add_tunnel_footprint(
+        &elements,
+        &xzbbox,
+        &mut tunnel_footprint,
+        args.skip_railways.as_ref(),
+    );
     let tunnel_portals = highways::collect_tunnel_portals(
         &elements,
         &editor,
@@ -868,6 +881,7 @@ pub fn generate_world_with_options(
                     // Ground generation runs on tile editors, so they need the real scale.
                     tile_editor.set_projection_info(&args.projection.to_string(), args.scale);
                     tile_editor.set_place_schematics(args.use_3d);
+                    tile_editor.set_external_tile(external_tile);
                     tile_editor.set_map_decals(place_branding);
                     if let Some(ref tp) = tree_pack {
                         tile_editor.set_tree_pack(Arc::clone(tp));
@@ -944,16 +958,12 @@ pub fn generate_world_with_options(
                         g_max_z,
                         false,
                     );
-                    if args.fillground {
-                        crate::ore_generation::generate_ores_region(
-                            &mut tile_editor,
-                            g_min_x,
-                            g_max_x,
-                            g_min_z,
-                            g_max_z,
-                            false,
-                        );
-                    }
+                    generate_fillground_ores(
+                        &mut tile_editor,
+                        args,
+                        &xzbbox,
+                        Some((g_min_x, g_max_x, g_min_z, g_max_z)),
+                    );
                     crate::water_depth::carve_lc_water_region(
                         &mut tile_editor,
                         ground.as_ref(),
@@ -1239,9 +1249,7 @@ pub fn generate_world_with_options(
     bench.mark("ground_gen");
 
     if ground_on_merged {
-        if args.fillground {
-            crate::ore_generation::generate_ores(&mut editor, &xzbbox);
-        }
+        generate_fillground_ores(&mut editor, args, &xzbbox, None);
         // Carve depth into ESA water cells (water_areas.rs only covers OSM polygons).
         crate::water_depth::carve_lc_water_pass(
             &mut editor,
@@ -1417,7 +1425,7 @@ pub fn generate_world_with_options(
 
     emit_gui_progress_update(99.5, "Finalizing world...");
 
-    if world_format == WorldFormat::JavaAnvil {
+    if world_format == WorldFormat::JavaAnvil && !external_tile {
         if let Err(e) = crate::world_utils::apply_java_world_settings(
             &output_path,
             args.gamemode,
@@ -1429,7 +1437,7 @@ pub fn generate_world_with_options(
 
     // Update player spawn Y coordinate based on terrain height after generation
     #[cfg(feature = "gui")]
-    if world_format == WorldFormat::JavaAnvil {
+    if world_format == WorldFormat::JavaAnvil && !external_tile {
         use crate::gui::update_player_spawn_y_after_generation;
 
         // Always update spawn Y since we now always set a spawn point (user-selected or default).
@@ -1455,7 +1463,7 @@ pub fn generate_world_with_options(
 
     // For Java worlds saved to the Desktop (GUI falls back there when .minecraft/saves
     // is missing), open the folder in the file explorer so the user can find the world.
-    if world_format == WorldFormat::JavaAnvil {
+    if world_format == WorldFormat::JavaAnvil && !external_tile {
         if let Some(desktop) = dirs::desktop_dir() {
             if output_path.starts_with(&desktop) {
                 if let Some(path_str) = output_path.to_str() {
@@ -1468,10 +1476,63 @@ pub fn generate_world_with_options(
     Ok(output_path)
 }
 
+/// Keep the fillground ore policy identical for merged and per-region generation.
+fn generate_fillground_ores(
+    editor: &mut WorldEditor<'_>,
+    args: &Args,
+    xzbbox: &XZBBox,
+    region: Option<(i32, i32, i32, i32)>,
+) {
+    if !args.fillground || args.no_ores {
+        return;
+    }
+    if let Some((min_x, max_x, min_z, max_z)) = region {
+        crate::ore_generation::generate_ores_region(editor, min_x, max_x, min_z, max_z, false);
+    } else {
+        crate::ore_generation::generate_ores(editor, xzbbox);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::osm_parser::ProcessedMember;
+
+    #[test]
+    fn no_ores_preserves_stone_in_region_and_merged_passes() {
+        use crate::block_definitions::STONE;
+        use clap::Parser;
+        let bbox = XZBBox::rect_from_xz_lengths(32.0, 32.0).unwrap();
+        let llbbox = LLBBox::new(54.6, 9.9, 54.61, 9.91).unwrap();
+        for region in [None, Some((0, 31, 0, 31))] {
+            for no_ores in [false, true] {
+                let mut args = Args::parse_from(["arnis", "--fillground"]);
+                args.no_ores = no_ores;
+                let mut editor = WorldEditor::new(PathBuf::from("/dev/null/unused"), &bbox, llbbox);
+                editor.set_ground(Arc::new(Ground::new_flat(20)));
+                editor.fill_blocks_absolute(STONE, 0, -63, 0, 31, 17, 31, None, None);
+                generate_fillground_ores(&mut editor, &args, &bbox, region);
+                let mut changed = 0;
+                for x in 0..32 {
+                    for z in 0..32 {
+                        for y in -63..=17 {
+                            let block = editor
+                                .get_block_absolute(x, y, z)
+                                .expect("filled stone remains present");
+                            if block != STONE {
+                                changed += 1;
+                            }
+                        }
+                    }
+                }
+                if no_ores {
+                    assert_eq!(changed, 0, "disabled ore pass {region:?}");
+                } else {
+                    assert!(changed > 0, "stock ore pass {region:?} still makes veins");
+                }
+            }
+        }
+    }
 
     fn square(id: u64, size: i32, tags: &[(&str, &str)]) -> ProcessedWay {
         let corners = [(0, 0), (size, 0), (size, size), (0, size)];
@@ -1660,5 +1721,73 @@ mod tests {
         let once = ids(&elements);
         sort_ground_fill_areas(&mut elements);
         assert_eq!(ids(&elements), once);
+    }
+}
+
+#[cfg(test)]
+mod tiler_output_tests {
+    use super::*;
+    use clap::Parser;
+    #[test]
+    fn external_tile_writes_regions_without_global_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        let grid_path = tmp.path().join("master");
+        crate::elevation::master_grid::save(
+            &grid_path,
+            &crate::elevation::master_grid::tests::fixture(),
+        )
+        .unwrap();
+        let tile = crate::elevation::master_grid::load_slice(&grid_path, 0, 0, 2, 2).unwrap();
+        let bbox = LLBBox::from_str(&format!(
+            "{},{},{},{}",
+            tile.bbox[0], tile.bbox[1], tile.bbox[2], tile.bbox[3]
+        ))
+        .unwrap();
+        let bounds = XZBBox::rect_from_min_max(0, 0, 1, 1).unwrap();
+        let ground = Ground::from_master_slice(tile).unwrap();
+        let output = tmp.path().join("tile");
+        std::fs::create_dir(&output).unwrap();
+        let args = Args::parse_from([
+            "arnis",
+            "--bbox=40,-74,40.01,-73.99",
+            "--output-dir=/tmp/unused",
+            "--no-3d",
+            "--legacy-trees",
+            "--canopy-height=false",
+            "--map-item=false",
+            "--signage=none",
+            "--no-ores",
+        ]);
+        generate_world_with_options(
+            Vec::new(),
+            bounds,
+            bbox,
+            ground,
+            &args,
+            GenerationOptions {
+                path: output.clone(),
+                format: WorldFormat::JavaAnvil,
+                level_name: None,
+                spawn_point: None,
+                luanti_game: None,
+                ground_level: 10,
+            },
+            Default::default(),
+            Default::default(),
+        )
+        .unwrap();
+        let files: Vec<_> = std::fs::read_dir(&output)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!files.is_empty(), "tile must contain generation output");
+        assert!(
+            files.iter().all(|s| s == "region"),
+            "unexpected global output: {files:?}"
+        );
+        assert!(std::fs::read_dir(output.join("region"))
+            .unwrap()
+            .next()
+            .is_some());
     }
 }

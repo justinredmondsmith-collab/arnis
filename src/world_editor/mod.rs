@@ -227,6 +227,7 @@ pub struct WorldEditor<'a> {
     world_time: i64,
     /// Bedrock only: give the player a starting map that reveals the world as they explore.
     start_with_map: bool,
+    external_tile: bool,
     /// Place bundled map image decals as map item frames. Java only.
     map_decals: bool,
     /// Signage context (decal registry, styles, intersections); shared with tile editors.
@@ -271,6 +272,7 @@ impl<'a> WorldEditor<'a> {
             game_mode: crate::args::GameMode::Creative,
             world_time: 6000,
             start_with_map: false,
+            external_tile: false,
             map_decals: false,
             signage: None,
             strict_bounds: None,
@@ -316,6 +318,7 @@ impl<'a> WorldEditor<'a> {
             game_mode: crate::args::GameMode::Creative,
             world_time: 6000,
             start_with_map: false,
+            external_tile: false,
             map_decals: false,
             signage: None,
             strict_bounds: None,
@@ -361,6 +364,7 @@ impl<'a> WorldEditor<'a> {
             game_mode: crate::args::GameMode::Creative,
             world_time: 6000,
             start_with_map: false,
+            external_tile: false,
             map_decals: false,
             signage: None,
             strict_bounds: None,
@@ -485,6 +489,10 @@ impl<'a> WorldEditor<'a> {
     }
 
     /// Bedrock only: enable the starting map that reveals the world as the player explores.
+    pub(crate) fn set_external_tile(&mut self, enabled: bool) {
+        self.external_tile = enabled;
+    }
+
     pub fn set_start_with_map(&mut self, enabled: bool) {
         self.start_with_map = enabled;
     }
@@ -2093,6 +2101,9 @@ impl<'a> WorldEditor<'a> {
 
     /// Saves world metadata to a JSON file
     pub(crate) fn save_metadata(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.external_tile {
+            return Ok(());
+        }
         let metadata_path = self.world_dir.join("metadata.json");
 
         let mut file = File::create(&metadata_path).map_err(|e| {
