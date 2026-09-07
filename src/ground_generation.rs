@@ -461,12 +461,12 @@ pub fn generate_ground_region(
                         }
 
                         if place_esa_water {
-                            // Pre-paint; carve_lc_water_pass later overwrites with depth.
+                            // Keep the surface; only nonexternal generation adds renderer depth later.
                             editor.set_block_if_absent_absolute(WATER, x, water_y, z);
-                            if water_y - 1 > min_y() {
+                            if !editor.tiler_owns_bathymetry() && water_y - 1 > min_y() {
                                 editor.set_block_if_absent_absolute(SAND, x, water_y - 1, z);
                             }
-                            if water_y - 2 > min_y() {
+                            if !editor.tiler_owns_bathymetry() && water_y - 2 > min_y() {
                                 editor.set_block_if_absent_absolute(SANDSTONE, x, water_y - 2, z);
                             }
                         } else {
@@ -823,7 +823,7 @@ pub fn generate_ground_region(
                                     );
                                 }
                                 did_underfill = true;
-                            } else {
+                            } else if !editor.tiler_owns_bathymetry() {
                                 // Under OSM water: find bottom of water column,
                                 // place sand/gravel/clay floor + sandstone below.
                                 let mut water_bottom = ground_y;
@@ -1370,4 +1370,120 @@ pub(crate) fn value_noise_01(x: i32, z: i32, scale: i32) -> f64 {
     let a = v00 * (1.0 - fx) + v10 * fx;
     let b = v01 * (1.0 - fx) + v11 * fx;
     a * (1.0 - fz) + b * fz
+}
+
+#[cfg(test)]
+mod tiler_water_tests {
+    use super::*;
+    use clap::Parser;
+    #[test]
+    fn tiler_water_ground_paints_surface_without_bed_materials() {
+        let bounds = XZBBox::rect_from_min_max(0, 0, 7, 7).unwrap();
+        let ll =
+            crate::coordinate_system::geographic::LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+        let ground = Ground::new_flat_land_cover_test(
+            land_cover::LandCoverData {
+                grid: vec![vec![land_cover::LC_WATER; 8]; 8],
+                water_distance: vec![vec![5; 8]; 8],
+                water_blend_cache: once_cell::sync::OnceCell::with_value(vec![vec![1.0; 8]; 8]),
+                width: 8,
+                height: 8,
+                cells_per_meter: 1.0,
+            },
+            8,
+            8,
+        );
+        let args = Args::parse_from(["arnis", "--ground-level=0", "--no-3d", "--legacy-trees"]);
+        for regional in [false, true] {
+            let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+            editor.set_ground(std::sync::Arc::new(ground.clone()));
+            editor.set_external_tile(true);
+            let outlines = crate::element_processing::bridge_styles::BridgeOutlineIndex::build(&[]);
+            let structures = crate::element_processing::bridges::BridgeStructureMap::build(
+                &[],
+                &editor,
+                &outlines,
+            );
+            let bridges = BridgeSurfaceMap::build(&[], &structures, 1.0);
+            let mask = BuildingFootprintBitmap::new_empty();
+            if regional {
+                generate_ground_region(
+                    &mut editor,
+                    &ground,
+                    &args,
+                    &bounds,
+                    &mask,
+                    &mask,
+                    &bridges,
+                    0,
+                    7,
+                    0,
+                    7,
+                    false,
+                );
+            } else {
+                generate_ground_layer(&mut editor, &ground, &args, &bounds, &mask, &mask, &bridges)
+                    .unwrap();
+            }
+            assert_eq!(editor.get_block_absolute(3, 0, 3), Some(WATER));
+            for y in [-1, -2] {
+                assert!(
+                    editor.get_block_absolute(3, y, 3).is_none(),
+                    "renderer painted bed at {y}"
+                );
+            }
+        }
+    }
+    #[test]
+    fn tiler_water_steep_existing_osm_surface_gets_no_bed() {
+        let bounds = XZBBox::rect_from_min_max(0, 0, 7, 7).unwrap();
+        let ll =
+            crate::coordinate_system::geographic::LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+        let heights = (0..8)
+            .map(|_| (0..8).map(|x| if x < 4 { 70.0 } else { 80.0 }).collect())
+            .collect();
+        let ground = Ground::new_elevation_test(heights, 8, 8);
+        let args = Args::parse_from(["arnis", "--ground-level=70", "--no-3d", "--legacy-trees"]);
+        for regional in [false, true] {
+            let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+            editor.set_ground(std::sync::Arc::new(ground.clone()));
+            editor.set_external_tile(true);
+            editor.set_block_absolute(WATER, 3, 70, 3, None, Some(&[]));
+            let outlines = crate::element_processing::bridge_styles::BridgeOutlineIndex::build(&[]);
+            let structures = crate::element_processing::bridges::BridgeStructureMap::build(
+                &[],
+                &editor,
+                &outlines,
+            );
+            let bridges = BridgeSurfaceMap::build(&[], &structures, 1.0);
+            let mask = BuildingFootprintBitmap::new_empty();
+            assert!(ground.slope(XZPoint::new(3, 3)) > 4);
+            if regional {
+                generate_ground_region(
+                    &mut editor,
+                    &ground,
+                    &args,
+                    &bounds,
+                    &mask,
+                    &mask,
+                    &bridges,
+                    0,
+                    7,
+                    0,
+                    7,
+                    false,
+                );
+            } else {
+                generate_ground_layer(&mut editor, &ground, &args, &bounds, &mask, &mask, &bridges)
+                    .unwrap();
+            }
+            assert_eq!(editor.get_block_absolute(3, 70, 3), Some(WATER));
+            for y in [68, 69] {
+                assert!(
+                    editor.get_block_absolute(3, y, 3).is_none(),
+                    "steep OSM water received bed at {y}"
+                );
+            }
+        }
+    }
 }

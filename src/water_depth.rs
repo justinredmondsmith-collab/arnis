@@ -363,6 +363,18 @@ pub fn carve_water_column(
     road_mask: &RoadMaskBitmap,
     bwf: &BigWaterField,
 ) {
+    // OSM may fill vacant water surfaces, but neither route may erase placed land.
+    if road_mask.contains(x, z)
+        || editor
+            .get_block_absolute(x, water_y, z)
+            .is_some_and(|block| block != WATER)
+    {
+        return;
+    }
+    if editor.tiler_owns_bathymetry() {
+        editor.set_block_if_absent_absolute(WATER, x, water_y, z);
+        return;
+    }
     debug_assert!(
         depth <= MAX_WATER_DEPTH,
         "water carve depth {depth} exceeds the max tier {MAX_WATER_DEPTH}"
@@ -713,6 +725,9 @@ pub fn carve_lc_water_region(
     iter_min_z: i32,
     iter_max_z: i32,
 ) {
+    if editor.tiler_owns_bathymetry() {
+        return; // Surface paint already happened; final depth belongs to assembly.
+    }
     let off_x = xzbbox.min_x();
     let off_z = xzbbox.min_z();
     // Only the water sub-rect can hold LC_WATER cells; intersect it with the range.
@@ -740,6 +755,11 @@ pub fn carve_lc_water_region(
                 }
                 water_y = ground_y;
             }
+            // Post-ground LC cannot create water in a vacant or solid dry column.
+            // Resolve the surface first, including the upstream interior-water rule.
+            if editor.get_block_absolute(x, water_y, z) != Some(WATER) {
+                continue;
+            }
             carve_water_column(editor, x, z, water_y, bwf.depth_at(x, z), road_mask, bwf);
         }
     }
@@ -748,6 +768,107 @@ pub fn carve_lc_water_region(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn water_editor(bounds: &XZBBox, external: bool) -> WorldEditor<'_> {
+        let ll =
+            crate::coordinate_system::geographic::LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+        let mut editor = WorldEditor::new("/dev/null/unused".into(), bounds, ll);
+        editor.set_external_tile(external);
+        editor
+    }
+
+    #[test]
+    fn tiler_water_column_retains_surface_without_renderer_bed_or_depth() {
+        let bounds = XZBBox::rect_from_min_max(0, 0, 7, 7).unwrap();
+        let mut editor = water_editor(&bounds, true);
+        let roads = RoadMaskBitmap::new(&bounds);
+        carve_water_column(&mut editor, 3, 3, 70, 6, &roads, &BigWaterField::empty());
+        assert_eq!(editor.get_block_absolute(3, 70, 3), Some(WATER));
+        for y in 50..70 {
+            assert!(
+                editor.get_block_absolute(3, y, 3).is_none(),
+                "renderer wrote depth/bed at {y}"
+            );
+        }
+        editor.set_block_absolute(STONE, 4, 70, 3, None, Some(&[]));
+        carve_water_column(&mut editor, 4, 3, 70, 6, &roads, &BigWaterField::empty());
+        assert_eq!(editor.get_block_absolute(4, 70, 3), Some(STONE));
+        let mut stock = water_editor(&bounds, false);
+        carve_water_column(&mut stock, 3, 3, 70, 3, &roads, &BigWaterField::empty());
+        assert!(
+            stock.get_block_absolute(3, 67, 3).is_some(),
+            "stock retains water or underwater vegetation"
+        );
+        assert!(
+            stock.get_block_absolute(3, 66, 3).is_some(),
+            "stock retains its bed"
+        );
+    }
+
+    #[test]
+    fn tiler_water_lc_pass_requires_placed_water_and_preserves_masks() {
+        use crate::land_cover::LandCoverData;
+        let ground = Ground::new_flat_land_cover_test(
+            LandCoverData {
+                grid: vec![vec![LC_WATER; 8]; 8],
+                water_distance: vec![vec![5; 8]; 8],
+                water_blend_cache: once_cell::sync::OnceCell::with_value(vec![vec![1.0; 8]; 8]),
+                width: 8,
+                height: 8,
+                cells_per_meter: 1.0,
+            },
+            8,
+            8,
+        );
+        for regional in [false, true] {
+            let bounds = XZBBox::rect_from_min_max(0, 0, 7, 7).unwrap();
+            let mut editor = water_editor(&bounds, false);
+            editor.set_ground(std::sync::Arc::new(ground.clone()));
+            let mut roads = RoadMaskBitmap::new(&bounds);
+            let mut tunnels = RoadMaskBitmap::new(&bounds);
+            roads.set(5, 3);
+            tunnels.set(6, 3);
+            // Flat fixture's datum is zero, not the production profile's datum.
+            editor.set_block_absolute(STONE, 3, 0, 3, None, Some(&[]));
+            for x in 4..=6 {
+                editor.set_block_absolute(WATER, x, 0, 3, None, Some(&[]));
+            }
+            let bwf = BigWaterField {
+                depth: vec![0x33; 32],
+                width: 8,
+                height: 8,
+                min_x: 0,
+                min_z: 0,
+            };
+            if regional {
+                carve_lc_water_region(
+                    &mut editor,
+                    &ground,
+                    &bounds,
+                    &bwf,
+                    &roads,
+                    &tunnels,
+                    0,
+                    7,
+                    0,
+                    7,
+                );
+            } else {
+                carve_lc_water_pass(&mut editor, &ground, &bounds, &bwf, &roads, &tunnels);
+            }
+            assert!(
+                editor.get_block_absolute(2, 0, 3).is_none(),
+                "vacant dry column was flooded"
+            );
+            assert_eq!(editor.get_block_absolute(3, 0, 3), Some(STONE));
+            assert_eq!(editor.get_block_absolute(4, -1, 3), Some(WATER));
+            for x in 5..=6 {
+                assert!(
+                    editor.get_block_absolute(x, -1, 3).is_none(),
+                    "mask was carved"
+                );
+            }
+        }
+    }
 
     #[test]
     fn dt_distance_from_shore() {

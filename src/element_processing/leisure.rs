@@ -6,6 +6,7 @@ use crate::element_processing::bridges::BridgeSurfaceMap;
 use crate::element_processing::surfaces::get_blocks_for_surface;
 use crate::element_processing::tree::Tree;
 use crate::floodfill_cache::{is_oversized_ring, BuildingFootprintBitmap, FloodFillCache};
+use crate::land_cover::osm_water_override::has_explicit_water_tag;
 use crate::osm_parser::{ProcessedMemberRole, ProcessedRelation, ProcessedWay};
 use crate::world_editor::WorldEditor;
 use rand::Rng;
@@ -19,6 +20,14 @@ pub fn generate_leisure(
     bridge_surface: &BridgeSurfaceMap,
 ) {
     if let Some(leisure_type) = element.tags.get("leisure") {
+        // Explicit water bodies belong to water rendering, including when a
+        // leisure surface override would otherwise paint land over them.
+        if has_explicit_water_tag(&element.tags)
+            && !matches!(leisure_type.as_str(), "swimming_pool" | "swimming_area")
+        {
+            return;
+        }
+
         let mut previous_node: Option<(i32, i32)> = None;
         let mut corner_count: i32 = 0;
         let mut current_leisure: Vec<(i32, i32)> = vec![];
@@ -201,6 +210,129 @@ pub fn generate_leisure_from_relation(
                     building_footprints,
                     bridge_surface,
                 );
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod water_guard_tests {
+    use super::*;
+
+    use crate::coordinate_system::cartesian::XZBBox;
+    use crate::coordinate_system::geographic::LLBBox;
+    use crate::element_processing::bridges::BridgeStructureMap;
+    use crate::osm_parser::ProcessedNode;
+    use clap::Parser;
+    use std::collections::HashMap;
+
+    fn fixture() -> (WorldEditor<'static>, Args, BridgeSurfaceMap) {
+        static BBOX: std::sync::LazyLock<XZBBox> =
+            std::sync::LazyLock::new(|| XZBBox::rect_from_min_max(0, 0, 15, 15).unwrap());
+        let editor = WorldEditor::new(
+            std::path::PathBuf::from("/dev/null/unused"),
+            &BBOX,
+            LLBBox::new(54.6, 9.9, 54.61, 9.91).unwrap(),
+        );
+        let outlines = crate::element_processing::bridge_styles::BridgeOutlineIndex::build(&[]);
+        let structures = BridgeStructureMap::build(&[], &editor, &outlines);
+        let bridges = BridgeSurfaceMap::build(&[], &structures, 1.0);
+        (
+            editor,
+            Args::parse_from(["arnis", "--bbox", "1,2,3,4"]),
+            bridges,
+        )
+    }
+
+    fn ring(tags: &[(&str, &str)]) -> ProcessedWay {
+        ProcessedWay {
+            id: 42,
+            tags: tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            nodes: [(1, 2, 2), (2, 10, 2), (3, 10, 10), (4, 2, 10), (1, 2, 2)]
+                .into_iter()
+                .map(|(id, x, z)| ProcessedNode {
+                    id,
+                    x,
+                    z,
+                    tags: HashMap::new(),
+                })
+                .collect(),
+        }
+    }
+
+    fn assert_empty(editor: &WorldEditor) {
+        for x in 0..=15 {
+            for z in 0..=15 {
+                for y in 0..=3 {
+                    assert!(
+                        !editor.block_exists_absolute(x, y, z),
+                        "unexpected block at {x},{y},{z}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn render(tags: &[(&str, &str)]) -> WorldEditor<'static> {
+        let (mut editor, args, bridges) = fixture();
+        generate_leisure(
+            &mut editor,
+            &ring(tags),
+            &args,
+            &FloodFillCache::new(),
+            &BuildingFootprintBitmap::new_empty(),
+            &bridges,
+        );
+        editor
+    }
+
+    #[test]
+    fn explicit_water_marina_surface_override_paints_nothing() {
+        assert_empty(&render(&[
+            ("leisure", "marina"),
+            ("water", "harbour"),
+            ("surface", "concrete"),
+        ]));
+    }
+
+    #[test]
+    fn explicit_water_unmatched_leisure_paints_nothing() {
+        assert_empty(&render(&[("leisure", "unmatched"), ("water", "lake")]));
+    }
+
+    #[test]
+    fn nonwater_park_keeps_its_ground() {
+        let editor = render(&[("leisure", "park")]);
+        for (x, z) in [(2, 2), (5, 5)] {
+            assert!(editor.check_for_block(x, 0, z, Some(&[GRASS_BLOCK])));
+        }
+    }
+
+    #[test]
+    fn negated_water_keeps_upstream_leisure_surface_behavior() {
+        for negative in ["no", "0", "false"] {
+            let editor = render(&[("leisure", "marina"), ("water", negative)]);
+            assert!(
+                editor.check_for_block(5, 0, 5, Some(&[WATER])),
+                "water={negative}"
+            );
+            let editor = render(&[("leisure", "park"), ("water", negative)]);
+            assert!(
+                editor.check_for_block(5, 0, 5, Some(&[GRASS_BLOCK])),
+                "water={negative}"
+            );
+        }
+    }
+
+    #[test]
+    fn swimming_features_keep_water_generation_with_explicit_water() {
+        for leisure in ["swimming_pool", "swimming_area"] {
+            let editor = render(&[("leisure", leisure), ("water", "pool")]);
+            for (x, z) in [(2, 2), (5, 5)] {
+                assert!(editor.check_for_block(x, 0, z, Some(&[WATER])), "{leisure}");
             }
         }
     }

@@ -488,11 +488,32 @@ impl<'a> WorldEditor<'a> {
         self.world_time = world_time;
     }
 
-    /// Bedrock only: enable the starting map that reveals the world as the player explores.
+    /// Enable the admitted external tile output policy.
     pub(crate) fn set_external_tile(&mut self, enabled: bool) {
         self.external_tile = enabled;
     }
 
+    /// Map local tile coordinates onto the shared master lattice for deterministic patterns.
+    pub(crate) fn master_coordinates(&self, x: i32, z: i32) -> (i32, i32) {
+        match self
+            .ground
+            .as_ref()
+            .and_then(|ground| ground.master_offset())
+        {
+            Some((col, row)) => (
+                x.saturating_sub(self.ground_origin_x).saturating_add(col),
+                z.saturating_sub(self.ground_origin_z).saturating_add(row),
+            ),
+            None => (x, z),
+        }
+    }
+
+    /// The admitted external profile delegates depth, bed materials and decoration to the tiler.
+    pub(crate) fn tiler_owns_bathymetry(&self) -> bool {
+        self.external_tile
+    }
+
+    /// Bedrock only: enable the starting map that reveals the world as the player explores.
     pub fn set_start_with_map(&mut self, enabled: bool) {
         self.start_with_map = enabled;
     }
@@ -889,6 +910,11 @@ impl<'a> WorldEditor<'a> {
 
     /// Köppen climate class of the generated area, taken at the bbox centre.
     pub fn climate(&self) -> crate::climate::Climate {
+        if self.external_tile {
+            if let Some(ground) = &self.ground {
+                return ground.climate();
+            }
+        }
         crate::climate::Climate::classify(&self.llbbox)
     }
 

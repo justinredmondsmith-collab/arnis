@@ -55,6 +55,7 @@ pub struct Ground {
     rotation_mask: Option<RotationMask>,
     /// Processed master terrain must not be normalized or repaired per tile.
     immutable_master: bool,
+    master_offset: Option<(i32, i32)>,
     export_context: Option<ExportContext>,
     /// Minecraft Y at/above which terrain is snow-capped; `i32::MAX` disables it.
     snow_threshold_y: i32,
@@ -92,6 +93,10 @@ fn snow_threshold_for(ed: &ElevationData, lat_deg: f64, ground_level: i32) -> i3
 }
 
 impl Ground {
+    pub(crate) fn master_offset(&self) -> Option<(i32, i32)> {
+        self.master_offset
+    }
+
     pub(crate) fn is_external_tile(&self) -> bool {
         self.immutable_master
     }
@@ -115,6 +120,7 @@ impl Ground {
             world_height: 0,
             rotation_mask: None,
             immutable_master: false,
+            master_offset: None,
             export_context: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
@@ -149,6 +155,7 @@ impl Ground {
             world_height: world_h,
             rotation_mask: None,
             immutable_master: false,
+            master_offset: None,
             export_context: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::classify(bbox),
@@ -171,6 +178,7 @@ impl Ground {
             world_height,
             rotation_mask: None,
             immutable_master: false,
+            master_offset: None,
             export_context: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
@@ -216,6 +224,7 @@ impl Ground {
             world_height,
             rotation_mask: None,
             immutable_master: false,
+            master_offset: None,
             export_context: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
@@ -302,6 +311,7 @@ impl Ground {
                         world_height: world_h,
                         rotation_mask: None,
                         immutable_master: false,
+                        master_offset: None,
                         export_context: Some(ExportContext {
                             water_floor,
                             sink_floor,
@@ -336,6 +346,7 @@ impl Ground {
                         world_height: 0,
                         rotation_mask: None,
                         immutable_master: false,
+                        master_offset: None,
                         export_context: None,
                         snow_threshold_y: i32::MAX,
                         climate: crate::climate::Climate::classify(bbox),
@@ -688,7 +699,7 @@ impl Ground {
     /// waterfront isn't terraced into a step.
     pub fn water_level(&self, coord: XZPoint) -> i32 {
         let center = self.level(coord);
-        if !self.elevation_enabled {
+        if !self.elevation_enabled || self.immutable_master {
             return center;
         }
         // Check if terrain is steep here; if flat, no snapping needed
@@ -1105,6 +1116,7 @@ mod tests {
             world_height: h,
             rotation_mask: None,
             immutable_master: false,
+            master_offset: None,
             export_context: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
@@ -1332,6 +1344,50 @@ mod tests {
 #[cfg(test)]
 mod tiler_master_tests {
     use super::*;
+    #[test]
+    fn tiler_water_uses_master_height_without_local_snapping() {
+        use crate::elevation::master_grid;
+        let root = tempfile::tempdir().unwrap();
+        let mut grid = master_grid::tests::fixture();
+        grid.metadata.width = 24;
+        grid.metadata.height = 24;
+        grid.metadata.world_width = 24;
+        grid.metadata.world_height = 24;
+        grid.metadata.payload_bytes = 24 * 24 * 10;
+        grid.elevation = (0..24 * 24)
+            .map(|i| if i % 24 < 12 { 70.0 } else { 67.0 })
+            .collect();
+        grid.land_cover = vec![80; 24 * 24];
+        grid.water_distance = vec![5; 24 * 24];
+        grid.water_blend = vec![1.0; 24 * 24];
+        let path = root.path().join("master");
+        master_grid::save(&path, &grid).unwrap();
+        let slice = master_grid::load_slice(&path, 0, 0, 24, 24).unwrap();
+        let ground = Ground::from_master_slice(slice).unwrap();
+        assert_eq!(
+            ground.water_level(XZPoint::new(11, 12)),
+            70,
+            "tile-local snapping moved a persisted master surface"
+        );
+        let slice = master_grid::load_slice(&path, 3, 4, 16, 16).unwrap();
+        let ground = Ground::from_master_slice(slice).unwrap();
+        assert_eq!(ground.master_offset(), Some((3, 4)));
+        assert_eq!(ground.water_level(XZPoint::new(8, 8)), 70);
+        let bounds = XZBBox::rect_from_min_max(0, 0, 15, 15).unwrap();
+        let ll =
+            crate::coordinate_system::geographic::LLBBox::from_str("24,45,24.01,45.01").unwrap();
+        let mut editor =
+            crate::world_editor::WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+        editor.set_ground(std::sync::Arc::new(ground));
+        assert_eq!(editor.master_coordinates(8, 8), (11, 12));
+        editor.set_external_tile(true);
+        assert_eq!(
+            editor.climate(),
+            crate::climate::Climate::Temperate,
+            "editor recomputed climate from tile bbox"
+        );
+    }
+
     use crate::elevation::master_grid::{load_slice, save, tests::fixture};
 
     fn differently_sized_slices() -> Vec<Ground> {
@@ -1412,6 +1468,7 @@ mod tiler_master_tests {
         ground.apply_bridge_land_cover_repair(&[], &bbox, 1.0);
         assert_eq!(ground.elevation_data.as_ref().unwrap().heights, before);
         assert!(ground.immutable_master);
+        assert_eq!(ground.master_offset(), Some((1, 1)));
     }
 }
 
@@ -1626,6 +1683,7 @@ impl Ground {
             world_height: height,
             rotation_mask: None,
             immutable_master: true,
+            master_offset: Some((tile.col as i32, tile.row as i32)),
             export_context: None,
             snow_threshold_y: meta.snow_threshold_y,
             climate,

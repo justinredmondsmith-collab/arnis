@@ -135,6 +135,13 @@ fn create_water_channel(
             let distance_from_center = dx.max(dz);
 
             if distance_from_center <= half_width + 1 {
+                if editor.tiler_owns_bathymetry() {
+                    // Segment endpoints may be outside this slice. Keep each admitted
+                    // master cell's own height instead of leveling from local endpoints.
+                    let water_y = editor.get_water_level(x, z);
+                    editor.set_block_if_absent_absolute(WATER, x, water_y, z);
+                    continue;
+                }
                 let ground_y = editor.get_ground_level(x, z);
                 // Only place water where terrain is at or below the water surface,
                 // but allow small elevation steps to avoid gaps on gentle slopes.
@@ -163,5 +170,31 @@ fn create_water_channel(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tiler_water_tests {
+    use super::*;
+    #[test]
+    fn tiler_water_channel_uses_each_master_cell_and_preserves_land() {
+        let bounds =
+            crate::coordinate_system::cartesian::XZBBox::rect_from_min_max(0, 0, 15, 15).unwrap();
+        let ll =
+            crate::coordinate_system::geographic::LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+        let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+        editor.set_ground(std::sync::Arc::new(
+            crate::ground::Ground::new_elevation_test(vec![vec![71.0; 16]; 16], 16, 16),
+        ));
+        editor.set_external_tile(true);
+        editor.set_block_absolute(STONE, 7, 71, 7, None, Some(&[]));
+        create_water_channel(&mut editor, 6, 6, 4, 65);
+        assert_eq!(
+            editor.get_block_absolute(6, 71, 6),
+            Some(WATER),
+            "segment endpoint level displaced master sample"
+        );
+        assert_eq!(editor.get_block_absolute(7, 71, 7), Some(STONE));
+        assert!(editor.get_block_absolute(6, 70, 6).is_none());
     }
 }

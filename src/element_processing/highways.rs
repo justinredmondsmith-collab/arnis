@@ -278,17 +278,18 @@ pub fn generate_highways(
     tunnel_cells: &mut Vec<HighwayTunnelCell>,
 ) {
     if let ProcessedElement::Way(way) = element {
-        // A way with no room to be bored falls through and renders at grade.
-        if renders_as_highway_tunnel(way)
-            && generate_highway_tunnel_shell(
+        if renders_as_highway_tunnel(way) {
+            generate_highway_tunnel_shell(
                 editor,
                 way,
                 args,
                 tunnel_internal_endpoints,
                 tunnel_portals,
                 tunnel_cells,
-            )
-        {
+            );
+        }
+        // Failed or unsupported underground geometry must not paint a road at grade.
+        if is_underground_highway(way) {
             return;
         }
     }
@@ -474,12 +475,29 @@ fn tunnel_shell_block(x: i32, y: i32, z: i32) -> Block {
     }
 }
 
+/// Recognized underground highway tags, independent of whether a bore can be built.
+/// OSM documents culverts for cattle crossings as well as waterways, while flooded
+/// tunnels are waterways: suppress their road surface without inventing a dry bore.
+/// https://wiki.openstreetmap.org/wiki/Key:tunnel
+/// Building passages and avalanche protectors can be at grade; covered=* alone
+/// is not underground. Unknown tunnel values retain upstream surface behavior.
+fn is_underground_highway(way: &ProcessedWay) -> bool {
+    way.tags.contains_key("highway")
+        && matches!(
+            way.tags.get("tunnel").map(String::as_str),
+            Some("yes" | "culvert" | "flooded")
+        )
+}
+
 // A highway way that should render as an underground tunnel.
 fn renders_as_highway_tunnel(way: &ProcessedWay) -> bool {
     if !way.tags.contains_key("highway") || way.nodes.len() < 2 {
         return false;
     }
-    if way.tags.get("tunnel").map(String::as_str) != Some("yes") {
+    if !matches!(
+        way.tags.get("tunnel").map(String::as_str),
+        Some("yes" | "culvert")
+    ) {
         return false;
     }
     if way.tags.get("indoor").map(String::as_str) == Some("yes")
@@ -571,11 +589,11 @@ pub fn collect_tunnel_portals(
             continue;
         }
         if renders_as_highway_tunnel(w) {
-            // A way with no room to bore renders at grade, so nothing descends.
+            // A way with no room to bore is omitted, so nothing descends.
             if tunnel_bore_fits(editor, w, scale) {
                 tunnels.push(w);
             }
-        } else {
+        } else if !is_underground_highway(w) {
             surface.push(w);
         }
     }
@@ -1100,7 +1118,7 @@ pub fn collect_tunnel_footprint(
         let ProcessedElement::Way(way) = element else {
             continue;
         };
-        // A way with no room to bore renders at grade and has nothing to protect.
+        // A way with no room to bore is omitted and has nothing to protect.
         if !renders_as_highway_tunnel(way) || !tunnel_bore_fits(editor, way, scale) {
             continue;
         }
@@ -2807,7 +2825,7 @@ pub fn collect_carriageway_coords(
 /// Shared stamping loop for the road-surface bitmaps; `include` filters by highway type.
 fn collect_highway_surface_coords(
     elements: &[ProcessedElement],
-    editor: Option<&WorldEditor>,
+    _editor: Option<&WorldEditor>,
     xzbbox: &XZBBox,
     scale: f64,
     include: impl Fn(&str) -> bool,
@@ -2852,9 +2870,8 @@ fn collect_highway_surface_coords(
             continue;
         }
 
-        // Tunnels render underground, unless there is no room to bore one.
-        if renders_as_highway_tunnel(way) && editor.is_none_or(|e| tunnel_bore_fits(e, way, scale))
-        {
+        // Underground ways never claim a surface road, even when no bore fits.
+        if is_underground_highway(way) {
             continue;
         }
 
@@ -3744,7 +3761,7 @@ mod tests {
         );
         crate::world_editor::set_terrain_floor_y(crate::world_editor::DEFAULT_MIN_Y);
 
-        assert!(!bored, "no room to bore: fall through to a surface road");
+        assert!(!bored, "no room to bore: omit the tunnel");
         assert!(cells.is_empty(), "and nothing is stamped into the world");
     }
 
@@ -4003,5 +4020,207 @@ mod tests {
         let editor = tunnel_editor(&xzbbox, crate::ground::Ground::new_flat(0));
         let mask = collect_road_surface_coords(&elems, &editor, &xzbbox, 1.0);
         assert!(!mask.contains(50, 50), "tunnel is not a surface road");
+    }
+
+    /// Exercise the public dispatcher and its real masks, shell and carve writes.
+    fn dispatch_highway_fixture(
+        editor: &mut WorldEditor,
+        bounds: &XZBBox,
+        elements: &[ProcessedElement],
+    ) -> Vec<HighwayTunnelCell> {
+        let args = Args::parse_from(["arnis", "--bbox", "1,2,3,4"]);
+        let endpoints = collect_tunnel_internal_endpoints(elements, bounds);
+        let portals = test_portals(editor, elements, &endpoints);
+        let footprint = collect_tunnel_footprint(elements, editor, &endpoints, bounds, 1.0);
+        let outlines = crate::element_processing::bridge_styles::BridgeOutlineIndex::build(&[]);
+        let structures = BridgeStructureMap::build(&[], editor, &outlines);
+        let surface = BridgeSurfaceMap::build(&[], &structures, 1.0);
+        let mask = collect_road_surface_coords(elements, editor, bounds, 1.0);
+        let mut cells = Vec::new();
+        for element in elements {
+            generate_highways(
+                editor,
+                element,
+                &args,
+                &HighwayConnectivityMap::new(),
+                &FloodFillCache::new(),
+                &mask,
+                &structures,
+                &surface,
+                &endpoints,
+                &portals,
+                &footprint,
+                &mut cells,
+            );
+        }
+        carve_highway_tunnel_interior(editor, &cells);
+        cells
+    }
+
+    #[test]
+    fn highway_dispatch_unfit_underground_ways_emit_no_surface_or_masks() {
+        let bounds = XZBBox::rect_from_xz_lengths(120.0, 120.0).unwrap();
+        for tunnel in ["yes", "culvert", "flooded"] {
+            let mut editor = tunnel_editor(&bounds, crate::ground::Ground::new_flat(-62));
+            let elements = [ProcessedElement::Way(straight_tunnel(&[
+                ("highway", "residential"),
+                ("tunnel", tunnel),
+            ]))];
+            let cells = dispatch_highway_fixture(&mut editor, &bounds, &elements);
+            assert!(cells.is_empty(), "unfit {tunnel} has no bore");
+            for x in 10..=90 {
+                assert_eq!(
+                    editor.get_block_absolute(x, -62, 50),
+                    None,
+                    "{tunnel} must not fall back to a surface road at x={x}"
+                );
+            }
+            let mask = collect_road_surface_coords(&elements, &editor, &bounds, 1.0);
+            assert!(
+                !mask.contains(50, 50),
+                "{tunnel} must not claim surface road mask"
+            );
+            let endpoints = collect_tunnel_internal_endpoints(&elements, &bounds);
+            let footprint = collect_tunnel_footprint(&elements, &editor, &endpoints, &bounds, 1.0);
+            assert!(!footprint.contains(50, 50), "no unbuilt bore protection");
+        }
+    }
+
+    #[test]
+    fn highway_dispatch_supported_bores_place_underground_road_and_roof() {
+        let bounds = XZBBox::rect_from_xz_lengths(120.0, 120.0).unwrap();
+        for tunnel in ["yes", "culvert"] {
+            let mut editor = tunnel_editor(&bounds, crate::ground::Ground::new_flat(0));
+            let elements = [ProcessedElement::Way(straight_tunnel(&[
+                ("highway", "residential"),
+                ("tunnel", tunnel),
+            ]))];
+            let cells = dispatch_highway_fixture(&mut editor, &bounds, &elements);
+            let center = cells
+                .iter()
+                .find(|c| c.x == 50 && c.z == 50)
+                .unwrap_or_else(|| panic!("{tunnel} must produce a bore"));
+            assert!(center.road_y < 0 && center.covered);
+            assert!(DEFAULT_ROAD_MIX
+                .contains(&editor.get_block_absolute(50, center.road_y, 50).unwrap()));
+            assert!(editor
+                .get_block_absolute(50, center.road_y + 1, 50)
+                .is_none_or(|b| b == AIR));
+            assert!(
+                [STONE_BRICKS, CRACKED_STONE_BRICKS, MOSSY_STONE_BRICKS].contains(
+                    &editor
+                        .get_block_absolute(50, center.road_y + TUNNEL_CEIL_OFFSET, 50)
+                        .unwrap()
+                )
+            );
+            assert_eq!(editor.get_block_absolute(50, 0, 50), None);
+        }
+    }
+
+    #[test]
+    fn highway_dispatch_surface_and_covered_roads_remain_visible() {
+        let bounds = XZBBox::rect_from_xz_lengths(120.0, 120.0).unwrap();
+        for tags in [
+            vec![],
+            vec![("tunnel", "no")],
+            vec![("tunnel", "false")],
+            vec![("tunnel", "0")],
+            vec![("covered", "yes")],
+            vec![("tunnel", "building_passage")],
+            vec![("tunnel", "avalanche_protector")],
+            vec![("tunnel", "covered")],
+            vec![("tunnel", "unknown")],
+        ] {
+            let mut editor = tunnel_editor(&bounds, crate::ground::Ground::new_flat(0));
+            let mut way_tags = vec![("highway", "residential")];
+            way_tags.extend_from_slice(&tags);
+            let elements = [ProcessedElement::Way(straight_tunnel(&way_tags))];
+            assert!(dispatch_highway_fixture(&mut editor, &bounds, &elements).is_empty());
+            let block = editor.get_block_absolute(50, 0, 51).unwrap();
+            assert!(
+                DEFAULT_ROAD_MIX.contains(&block),
+                "surface preserved for {tags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn highway_dispatch_flooded_and_ineligible_tunnels_never_paint_at_grade() {
+        let bounds = XZBBox::rect_from_xz_lengths(120.0, 120.0).unwrap();
+        for extra in [
+            ("tunnel", "flooded"),
+            ("indoor", "yes"),
+            ("level", "-1"),
+            ("area", "yes"),
+        ] {
+            let mut editor = tunnel_editor(&bounds, crate::ground::Ground::new_flat(0));
+            let elements = [ProcessedElement::Way(straight_tunnel(&[
+                ("highway", "residential"),
+                ("tunnel", "yes"),
+                extra,
+            ]))];
+            assert!(dispatch_highway_fixture(&mut editor, &bounds, &elements).is_empty());
+            assert_eq!(editor.get_block_absolute(50, 0, 50), None, "{extra:?}");
+        }
+    }
+
+    #[test]
+    fn highway_dispatch_tunnel_tag_does_not_remove_signal_node_or_iron_pole() {
+        let bounds = XZBBox::rect_from_xz_lengths(120.0, 120.0).unwrap();
+        let mut editor = tunnel_editor(&bounds, crate::ground::Ground::new_flat(0));
+        let elements = [ProcessedElement::Node(ProcessedNode {
+            id: 1,
+            x: 50,
+            z: 50,
+            tags: [
+                ("highway".into(), "traffic_signals".into()),
+                ("tunnel".into(), "yes".into()),
+            ]
+            .into(),
+        })];
+        dispatch_highway_fixture(&mut editor, &bounds, &elements);
+        assert_eq!(editor.get_block_absolute(50, 1, 50), Some(COBBLESTONE_WALL));
+        assert_eq!(editor.get_block_absolute(50, 2, 50), Some(IRON_BARS));
+        assert_eq!(editor.get_block_absolute(50, 3, 50), Some(IRON_BARS));
+        assert_eq!(editor.get_block_absolute(50, 4, 50), Some(BLACK_WOOL));
+    }
+
+    #[test]
+    fn highway_dispatch_unbuilt_tunnels_cannot_claim_surface_approaches() {
+        let bounds = XZBBox::rect_from_xz_lengths(120.0, 120.0).unwrap();
+        for extra in [("tunnel", "flooded"), ("indoor", "yes"), ("area", "yes")] {
+            let editor = tunnel_editor(&bounds, crate::ground::Ground::new_flat(0));
+            let elements = [
+                ProcessedElement::Way(tunnel_span(
+                    1,
+                    40,
+                    70,
+                    &[("highway", "residential"), ("tunnel", "yes")],
+                )),
+                ProcessedElement::Way(tunnel_span(
+                    2,
+                    5,
+                    40,
+                    &[("highway", "residential"), ("tunnel", "yes"), extra],
+                )),
+            ];
+            let endpoints = collect_tunnel_internal_endpoints(&elements, &bounds);
+            let portals = test_portals(&editor, &elements, &endpoints);
+            assert!(
+                portals.approach(2).is_none(),
+                "unbuilt {extra:?} cannot become a surface ramp"
+            );
+        }
+        let editor = tunnel_editor(&bounds, crate::ground::Ground::new_flat(-62));
+        for tunnel in ["yes", "culvert", "flooded"] {
+            let elements = [ProcessedElement::Way(straight_tunnel(&[
+                ("highway", "residential"),
+                ("tunnel", tunnel),
+            ]))];
+            assert!(
+                !collect_road_surface_coords(&elements, &editor, &bounds, 1.0).contains(50, 50)
+            );
+            assert!(!collect_carriageway_coords(&elements, &bounds, 1.0).contains(50, 50));
+        }
     }
 }
