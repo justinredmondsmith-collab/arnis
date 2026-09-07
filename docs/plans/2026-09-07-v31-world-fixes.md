@@ -23,7 +23,7 @@ traffic-signal palette change or global all-water sea-level clamp.
       ring handling, negative level/layer guards and master-anchored support positions.
 - [x] Supported interior foundations and no surface fallback for tunnel roads,
       retaining upstream behavior when its tests establish the invariant.
-- [ ] Run focused then full headless tests, locked release build, formatter/clippy,
+- [x] Run focused then full headless tests, locked release build, formatter/clippy,
       stock comparison and independent reviews; publish a separate draft PR.
 
 The full capability list stays empty until all advertised ABI/profile invariants and

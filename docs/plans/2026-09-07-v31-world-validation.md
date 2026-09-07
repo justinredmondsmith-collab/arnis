@@ -61,6 +61,15 @@ policy must use a shared master reference while preserving harbor/marina water,
 elevated inland lakes/rivers, real cliffs and cross-tile consistency. The old
 global all-water sea-level clamp is explicitly rejected by the patch audit.
 
+A follow-up source investigation found that existing four bands can encode the
+resolved result if every render path obeys the master wet mask. Clearing the
+land-cover water class alone is insufficient: OSM polygons can still paint water.
+Classification must be authenticated by the source manifest and versioned profile,
+with explicit coastal/inland coverage rather than inferred bbox-edge connectivity
+or proximity. Preserve original DEM and land evidence before master repairs.
+The historical cached OSM candidate examined during investigation did not match
+its archived inventory checksum and is not admitted as frozen evidence.
+
 Upstream reports were checked during this work:
 [coastal terrain gaps #1132](https://github.com/louis-e/arnis/issues/1132) remained
 open, while [railway generation #994](https://github.com/louis-e/arnis/issues/994)
