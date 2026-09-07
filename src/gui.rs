@@ -1273,6 +1273,8 @@ fn gui_start_generation(
                 legacy_terrain: false,
                 interior: interior_enabled,
                 fillground: fillground_enabled,
+                no_ores: false,
+                skip_railways: None,
                 legacy_trees: legacy_trees_enabled,
                 max_tree_size: crate::trees::tree_library::TreeSize::from_str_lossy(&max_tree_size),
                 canopy_height: canopy_height_enabled,

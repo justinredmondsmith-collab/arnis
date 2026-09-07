@@ -1,3 +1,4 @@
+use crate::args::RailwayExclusions;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::coordinate_system::cartesian::XZBBox;
@@ -68,6 +69,10 @@ fn rail_tunnel_shell_block(x: i32, y: i32, z: i32) -> Block {
     }
 }
 
+fn railway_is_excluded(way: &ProcessedWay, exclusions: Option<&RailwayExclusions>) -> bool {
+    exclusions.is_some_and(|excluded| excluded.excludes(&way.tags))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn generate_railways(
     editor: &mut WorldEditor,
@@ -78,7 +83,12 @@ pub fn generate_railways(
     road_mask: &CoordinateBitmap,
     building_footprints: &CoordinateBitmap,
     rail_mask: &CoordinateBitmap,
+    exclusions: Option<&RailwayExclusions>,
 ) {
+    // This gate precedes tracks, bridges, catenary, tunnel shells and carve points.
+    if railway_is_excluded(element, exclusions) {
+        return;
+    }
     let Some(railway_type) = element.tags.get("railway") else {
         return;
     };
@@ -185,13 +195,14 @@ fn renders_as_rail_bridge(way: &ProcessedWay) -> bool {
 /// Endpoints shared by 2+ rendered rail-bridge ways — used to suppress per-way ramps mid-bridge.
 pub fn collect_rail_bridge_internal_endpoints(
     elements: &[ProcessedElement],
+    exclusions: Option<&RailwayExclusions>,
 ) -> RailBridgeInternalEndpoints {
     let mut counts: HashMap<(i32, i32), u32> = HashMap::new();
     for elem in elements {
         let ProcessedElement::Way(w) = elem else {
             continue;
         };
-        if !renders_as_rail_bridge(w) {
+        if railway_is_excluded(w, exclusions) || !renders_as_rail_bridge(w) {
             continue;
         }
         let s = &w.nodes[0];
@@ -423,11 +434,12 @@ fn generate_catenary(
 pub fn collect_at_grade_rail_mask(
     elements: &[ProcessedElement],
     xzbbox: &XZBBox,
+    exclusions: Option<&RailwayExclusions>,
 ) -> CoordinateBitmap {
     // No catenary anywhere means nothing reads the mask, so skip the allocation.
     if !elements
         .iter()
-        .any(|e| matches!(e, ProcessedElement::Way(w) if catenary_wanted(w)))
+        .any(|e| matches!(e, ProcessedElement::Way(w) if !railway_is_excluded(w, exclusions) && catenary_wanted(w)))
     {
         return CoordinateBitmap::new_empty();
     }
@@ -436,7 +448,7 @@ pub fn collect_at_grade_rail_mask(
         let ProcessedElement::Way(way) = element else {
             continue;
         };
-        if way.nodes.len() < 2 {
+        if railway_is_excluded(way, exclusions) || way.nodes.len() < 2 {
             continue;
         }
         if way.tags.get("railway").map(String::as_str) != Some("rail") {
@@ -463,10 +475,11 @@ pub fn add_tunnel_footprint(
     elements: &[ProcessedElement],
     xzbbox: &XZBBox,
     footprint: &mut CoordinateBitmap,
+    exclusions: Option<&RailwayExclusions>,
 ) {
     if !elements
         .iter()
-        .any(|e| matches!(e, ProcessedElement::Way(w) if renders_as_rail_tunnel(w)))
+        .any(|e| matches!(e, ProcessedElement::Way(w) if !railway_is_excluded(w, exclusions) && renders_as_rail_tunnel(w)))
     {
         return;
     }
@@ -477,7 +490,7 @@ pub fn add_tunnel_footprint(
         let ProcessedElement::Way(way) = element else {
             continue;
         };
-        if !renders_as_rail_tunnel(way) {
+        if railway_is_excluded(way, exclusions) || !renders_as_rail_tunnel(way) {
             continue;
         }
         for (bx, bz) in build_smoothed_centerline(way) {
@@ -1083,6 +1096,7 @@ mod tests {
             &clear,
             &clear,
             rail_mask,
+            None,
         );
         rail_tunnel_points
     }
@@ -1095,6 +1109,124 @@ mod tests {
         use std::sync::OnceLock;
         static BBOX: OnceLock<XZBBox> = OnceLock::new();
         BBOX.get_or_init(|| XZBBox::rect_from_xz_lengths(200.0, 120.0).unwrap())
+    }
+
+    #[test]
+    fn excluded_railways_leave_no_visible_blocks_or_carve_points() {
+        let bbox = rail_mask_bbox();
+        for tags in [
+            vec![
+                ("railway", "rail"),
+                ("electrified", "contact_line"),
+                ("usage", "main"),
+            ],
+            vec![("railway", "rail"), ("bridge", "yes")],
+            vec![("railway", "subway")],
+            vec![("railway", "rail"), ("subway", "yes")],
+            vec![("railway", "unknown")],
+        ] {
+            let way = straight_rail(&tags);
+            let mut editor = test_editor(bbox);
+            let mut points = Vec::new();
+            let clear = CoordinateBitmap::new_empty();
+            let exclusions = "all".parse::<RailwayExclusions>().unwrap();
+            generate_railways(
+                &mut editor,
+                &way,
+                &mut points,
+                &HashSet::new(),
+                &BridgeOutlineIndex::build(&[]),
+                &clear,
+                &clear,
+                &clear,
+                Some(&exclusions),
+            );
+            assert!(
+                points.is_empty(),
+                "excluded tunnel has no carve points: {tags:?}"
+            );
+            for x in 15..66 {
+                for z in 44..57 {
+                    for y in -12..16 {
+                        assert!(
+                            !editor.block_at(x, y, z),
+                            "excluded railway left a block: {tags:?} at {x},{y},{z}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn subway_selection_suppresses_both_tag_forms_and_keeps_surface_rail() {
+        let bbox = rail_mask_bbox();
+        let exclusions: RailwayExclusions = "subway".parse().unwrap();
+        for tags in [
+            vec![("railway", "subway")],
+            vec![("railway", "rail"), ("subway", "yes")],
+            vec![
+                ("railway", "rail"),
+                ("electrified", "contact_line"),
+                ("usage", "main"),
+            ],
+        ] {
+            let way = straight_rail(&tags);
+            let excluded = exclusions.excludes(&way.tags);
+            let mut editor = test_editor(bbox);
+            let mut points = Vec::new();
+            let clear = CoordinateBitmap::new_empty();
+            generate_railways(
+                &mut editor,
+                &way,
+                &mut points,
+                &HashSet::new(),
+                &BridgeOutlineIndex::build(&[]),
+                &clear,
+                &clear,
+                &clear,
+                Some(&exclusions),
+            );
+            assert!(points.is_empty());
+            let mut footprint = CoordinateBitmap::new_empty();
+            add_tunnel_footprint(
+                &[ProcessedElement::Way(way)],
+                bbox,
+                &mut footprint,
+                Some(&exclusions),
+            );
+            assert!(footprint.is_empty());
+            assert_eq!(editor.block_at(20, 1, 50), !excluded);
+            assert_eq!(editor.block_at(20, CATENARY_WIRE_HEIGHT, 50), !excluded);
+        }
+    }
+
+    #[test]
+    fn excluded_railways_do_not_contribute_masks_or_bridge_endpoints() {
+        let bbox = rail_mask_bbox();
+        let exclusions = "rail,subway".parse::<RailwayExclusions>().unwrap();
+        let rail = straight_rail(&[
+            ("railway", "rail"),
+            ("electrified", "contact_line"),
+            ("usage", "main"),
+        ]);
+        let bridge = straight_rail(&[("railway", "rail"), ("bridge", "yes")]);
+        let tunnel = straight_rail(&[("railway", "rail"), ("subway", "yes")]);
+        let elements = vec![
+            ProcessedElement::Way(rail),
+            ProcessedElement::Way(bridge.clone()),
+            ProcessedElement::Way(bridge),
+            ProcessedElement::Way(tunnel),
+        ];
+        assert!(collect_rail_bridge_internal_endpoints(&elements, None).contains(&(20, 50)));
+        assert!(collect_at_grade_rail_mask(&elements, bbox, None).contains(40, 50));
+        assert!(collect_rail_bridge_internal_endpoints(&elements, Some(&exclusions)).is_empty());
+        assert!(!collect_at_grade_rail_mask(&elements, bbox, Some(&exclusions)).contains(40, 50));
+        let mut footprint = CoordinateBitmap::new(bbox);
+        footprint.set(10, 10);
+        add_tunnel_footprint(&elements, bbox, &mut footprint, Some(&exclusions));
+        assert!(!footprint.contains(40, 50));
+        assert!(footprint.contains(10, 10));
     }
 
     #[test]
@@ -1246,7 +1378,7 @@ mod tests {
             ProcessedElement::Way(straight_rail(&[("railway", "station"), ("subway", "yes")])),
         ];
         let mut footprint = CoordinateBitmap::new_empty();
-        add_tunnel_footprint(&non_tracks, &xzbbox, &mut footprint);
+        add_tunnel_footprint(&non_tracks, &xzbbox, &mut footprint, None);
         assert!(
             footprint.is_empty(),
             "platform and station ways do not allocate a tunnel footprint"
@@ -1258,7 +1390,7 @@ mod tests {
             ("railway", "rail"),
             ("tunnel", "yes"),
         ]))];
-        add_tunnel_footprint(&track, &xzbbox, &mut footprint);
+        add_tunnel_footprint(&track, &xzbbox, &mut footprint, None);
 
         assert!(
             footprint.contains(10, 10),

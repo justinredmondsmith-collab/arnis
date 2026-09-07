@@ -47,6 +47,8 @@ mod telemetry;
 #[cfg(test)]
 mod test_utilities;
 mod tile;
+mod tiler_contract;
+mod tiler_runtime;
 mod trees;
 mod version_check;
 mod water_depth;
@@ -597,6 +599,35 @@ fn run_cli() {
 fn main() {
     #[cfg(target_os = "windows")]
     attach_parent_console();
+
+    // Contract queries and invalid integration controls must precede all stock
+    // CLI side effects, including update checks, cache cleanup and output creation.
+    let raw_args: Vec<_> = std::env::args_os().skip(1).collect();
+    match tiler_contract::capability_command(&raw_args) {
+        Ok(true) => {
+            println!("{}", tiler_contract::capability_report());
+            return;
+        }
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(error.exit_code);
+        }
+        Ok(false) => {}
+    }
+    match tiler_contract::controls_from_environment() {
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(error.exit_code);
+        }
+        Ok(Some(request)) => {
+            if let Err(error) = tiler_runtime::run(request, &raw_args) {
+                eprintln!("{error}");
+                std::process::exit(error.exit_code);
+            }
+            return;
+        }
+        Ok(None) => {}
+    }
 
     // Only run CLI mode if the user supplied args.
     #[cfg(feature = "gui")]

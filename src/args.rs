@@ -72,6 +72,14 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub fillground: bool,
 
+    /// Skip ore veins while retaining filled stone ground.
+    #[arg(long)]
+    pub no_ores: bool,
+
+    /// Comma-separated railway classes to exclude, or all.
+    #[arg(long)]
+    pub skip_railways: Option<RailwayExclusions>,
+
     /// Use the legacy procedural trees instead of the bundled schematic tree pack.
     /// Schematic trees are on by default; this flag opts out.
     #[arg(long, default_value_t = false)]
@@ -158,6 +166,57 @@ pub struct Args {
     /// building signage: shop name plates, house numbers and crossing signs.
     #[arg(long, value_enum, default_value_t = SignageLevel::Basic)]
     pub signage: SignageLevel,
+}
+
+/// Validated, lowercase railway exclusions. An absent list preserves stock behavior.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RailwayExclusions(Vec<String>);
+
+impl std::str::FromStr for RailwayExclusions {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        const VALUES: &[&str] = &[
+            "all",
+            "rail",
+            "subway",
+            "tram",
+            "light_rail",
+            "narrow_gauge",
+            "monorail",
+            "funicular",
+            "preserved",
+            "disused",
+            "abandoned",
+            "construction",
+            "miniature",
+        ];
+        let mut values = Vec::new();
+        for token in value.split(',') {
+            let normalized = token.to_ascii_lowercase();
+            if !VALUES.contains(&normalized.as_str()) || values.contains(&normalized) {
+                return Err(format!("invalid or duplicate railway exclusion: {token:?}"));
+            }
+            values.push(normalized);
+        }
+        if values.len() > 1 && values.iter().any(|v| v == "all") {
+            return Err("railway exclusion 'all' must be used alone".into());
+        }
+        Ok(Self(values))
+    }
+}
+
+impl RailwayExclusions {
+    pub fn excludes(&self, tags: &std::collections::HashMap<String, String>) -> bool {
+        let Some(class) = tags.get("railway") else {
+            return false;
+        };
+        self.0.iter().any(|value| {
+            value == "all"
+                || value == class
+                || (value == "subway" && tags.get("subway").map(String::as_str) == Some("yes"))
+        })
+    }
 }
 
 /// How much image signage to place.
@@ -417,6 +476,71 @@ fn parse_duration(arg: &str) -> Result<std::time::Duration, std::num::ParseIntEr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn domain_exclusion_flags_accept_contract_values() {
+        assert!(
+            Args::try_parse_from(["arnis", "--no-ores", "--skip-railways=SuBwAy,RAIL"]).is_ok()
+        );
+    }
+
+    #[test]
+    fn railway_exclusions_normalize_and_preserve_unselected_features() {
+        let defaults = Args::parse_from(["arnis"]);
+        assert!(!defaults.no_ores);
+        assert!(defaults.skip_railways.is_none());
+        for class in [
+            "rail",
+            "subway",
+            "tram",
+            "light_rail",
+            "narrow_gauge",
+            "monorail",
+            "funicular",
+            "preserved",
+            "disused",
+            "abandoned",
+            "construction",
+            "miniature",
+        ] {
+            let exclusions: RailwayExclusions = class.to_ascii_uppercase().parse().unwrap();
+            let tags = std::collections::HashMap::from([("railway".into(), class.into())]);
+            assert!(exclusions.excludes(&tags), "{class}");
+        }
+        let subway: RailwayExclusions = "SuBwAy".parse().unwrap();
+        let mut tags = std::collections::HashMap::from([("railway".into(), "rail".into())]);
+        assert!(!subway.excludes(&tags));
+        tags.insert("subway".into(), "yes".into());
+        assert!(subway.excludes(&tags));
+        let all: RailwayExclusions = "ALL".parse().unwrap();
+        tags.insert("railway".into(), "unknown_future_class".into());
+        assert!(all.excludes(&tags));
+        tags.remove("railway");
+        tags.insert("power".into(), "line".into());
+        assert!(
+            !all.excludes(&tags),
+            "unrelated power infrastructure survives"
+        );
+    }
+
+    #[test]
+    fn railway_exclusions_reject_invalid_lists() {
+        for value in [
+            "",
+            "rail,",
+            ",rail",
+            "rail,RAIL",
+            "all,rail",
+            "subway tram",
+            " rail",
+            "unknown",
+        ] {
+            assert!(
+                Args::try_parse_from(["arnis", &format!("--skip-railways={value}")]).is_err(),
+                "{value}"
+            );
+        }
+    }
 
     #[test]
     fn test_generation_mode() {

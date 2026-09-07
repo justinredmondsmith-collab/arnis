@@ -30,6 +30,14 @@ pub struct RotationMask {
     pub orig_max_z: i32,
 }
 
+/// Global carve floors chosen before terrain and OSM postprocessing.
+#[derive(Clone)]
+struct ExportContext {
+    water_floor: i32,
+    sink_floor: i32,
+    aws_only: bool,
+}
+
 /// Represents terrain data, land cover classification, and elevation settings
 #[derive(Clone)]
 pub struct Ground {
@@ -45,6 +53,9 @@ pub struct Ground {
     world_height: usize,
     /// When set, coordinates outside the rotated original bbox are skipped.
     rotation_mask: Option<RotationMask>,
+    /// Processed master terrain must not be normalized or repaired per tile.
+    immutable_master: bool,
+    export_context: Option<ExportContext>,
     /// Minecraft Y at/above which terrain is snow-capped; `i32::MAX` disables it.
     snow_threshold_y: i32,
     /// Climate at the bbox center, driving arid/polar surface palettes and biomes.
@@ -81,6 +92,10 @@ fn snow_threshold_for(ed: &ElevationData, lat_deg: f64, ground_level: i32) -> i3
 }
 
 impl Ground {
+    pub(crate) fn is_external_tile(&self) -> bool {
+        self.immutable_master
+    }
+
     /// Terrain base actually in use. Differs from `args.ground_level` when the elevation
     /// scaler sank the base to reach the extended floor, so anything inverting the
     /// metre->Y affine (snow line, montane trees, filler chunks) must read it from here.
@@ -99,6 +114,8 @@ impl Ground {
             world_width: 0,
             world_height: 0,
             rotation_mask: None,
+            immutable_master: false,
+            export_context: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
         }
@@ -131,6 +148,8 @@ impl Ground {
             world_width: world_w,
             world_height: world_h,
             rotation_mask: None,
+            immutable_master: false,
+            export_context: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::classify(bbox),
         }
@@ -151,6 +170,8 @@ impl Ground {
             world_width,
             world_height,
             rotation_mask: None,
+            immutable_master: false,
+            export_context: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
         }
@@ -194,6 +215,8 @@ impl Ground {
             world_width,
             world_height,
             rotation_mask: None,
+            immutable_master: false,
+            export_context: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
         }
@@ -278,6 +301,12 @@ impl Ground {
                         world_width: world_w,
                         world_height: world_h,
                         rotation_mask: None,
+                        immutable_master: false,
+                        export_context: Some(ExportContext {
+                            water_floor,
+                            sink_floor,
+                            aws_only: aws_only_elevation,
+                        }),
                         snow_threshold_y,
                         climate: crate::climate::Climate::classify(bbox),
                     }
@@ -306,6 +335,8 @@ impl Ground {
                         world_width: 0,
                         world_height: 0,
                         rotation_mask: None,
+                        immutable_master: false,
+                        export_context: None,
                         snow_threshold_y: i32::MAX,
                         climate: crate::climate::Climate::classify(bbox),
                     }
@@ -379,6 +410,9 @@ impl Ground {
 
     /// Force LC_WATER inside OSM water, sinking those cells onto that water's surface.
     pub fn apply_osm_water_override(&mut self, elements: &[ProcessedElement], xzbbox: &XZBBox) {
+        if self.immutable_master {
+            return;
+        }
         let Ground {
             land_cover,
             elevation_data,
@@ -405,6 +439,9 @@ impl Ground {
         xzbbox: &XZBBox,
         scale: f64,
     ) {
+        if self.immutable_master {
+            return;
+        }
         let (world_width, world_height) = self.world_dims();
         let Some(lc) = self.land_cover.as_mut() else {
             return;
@@ -426,6 +463,9 @@ impl Ground {
         xzbbox: &XZBBox,
         scale: f64,
     ) {
+        if self.immutable_master {
+            return;
+        }
         let Ground {
             land_cover,
             elevation_data,
@@ -490,6 +530,11 @@ impl Ground {
     #[inline(always)]
     pub fn cover_class(&self, coord: XZPoint) -> u8 {
         if let Some(ref lc) = self.land_cover {
+            if self.immutable_master {
+                let x = (coord.x.max(0) as usize).min(lc.width - 1);
+                let z = (coord.z.max(0) as usize).min(lc.height - 1);
+                return lc.grid[z][x];
+            }
             let (world_w, world_h) = self.world_dims();
             let x_ratio = (coord.x as f64 / (world_w - 1).max(1) as f64).clamp(0.0, 1.0);
             let z_ratio = (coord.z as f64 / (world_h - 1).max(1) as f64).clamp(0.0, 1.0);
@@ -506,6 +551,11 @@ impl Ground {
     #[inline(always)]
     pub fn water_distance(&self, coord: XZPoint) -> u8 {
         if let Some(ref lc) = self.land_cover {
+            if self.immutable_master {
+                let x = (coord.x.max(0) as usize).min(lc.width - 1);
+                let z = (coord.z.max(0) as usize).min(lc.height - 1);
+                return lc.water_distance[z][x];
+            }
             let (world_w, world_h) = self.world_dims();
             let x_ratio = (coord.x as f64 / (world_w - 1).max(1) as f64).clamp(0.0, 1.0);
             let z_ratio = (coord.z as f64 / (world_h - 1).max(1) as f64).clamp(0.0, 1.0);
@@ -538,6 +588,11 @@ impl Ground {
     #[inline(always)]
     pub fn water_blend(&self, coord: XZPoint) -> f64 {
         if let Some(ref lc) = self.land_cover {
+            if self.immutable_master {
+                let x = (coord.x.max(0) as usize).min(lc.width - 1);
+                let z = (coord.z.max(0) as usize).min(lc.height - 1);
+                return lc.water_blend_grid()[z][x] as f64;
+            }
             let (world_w, world_h) = self.world_dims();
             // Continuous grid coordinates (no rounding — that's the key difference
             // from cover_class which uses .round())
@@ -614,6 +669,13 @@ impl Ground {
         }
 
         let data: &ElevationData = self.elevation_data.as_ref().unwrap();
+        if self.immutable_master {
+            // Admitted tiles have exactly one saved sample per block. Normalizing
+            // through floating-point ratios can move half-height ties across Y.
+            let x = (coord.x.max(0) as usize).min(data.width - 1);
+            let z = (coord.z.max(0) as usize).min(data.height - 1);
+            return (data.heights[z][x] as f64).round() as i32;
+        }
         let (x_ratio, z_ratio) = self.get_data_coordinates(coord, data);
         self.interpolate_height(x_ratio, z_ratio, data)
     }
@@ -1042,9 +1104,120 @@ mod tests {
             world_width: w,
             world_height: h,
             rotation_mask: None,
+            immutable_master: false,
+            export_context: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
         }
+    }
+
+    fn export_fixture() -> (Ground, Args, LLBBox) {
+        use clap::Parser;
+        let mut ground = ground_with(vec![vec![72.0, 74.0], vec![76.0, 78.0]]);
+        ground.ground_level = 70;
+        let ed = ground.elevation_data.as_mut().unwrap();
+        ed.ground_level = 70;
+        ed.min_height_m = -3.0;
+        ed.blocks_per_meter = 2.0;
+        ground.export_context = Some(ExportContext {
+            water_floor: 68,
+            sink_floor: 65,
+            aws_only: true,
+        });
+        ground.snow_threshold_y = 234;
+        ground.climate = crate::climate::Climate::Boreal;
+        ground.land_cover = Some(LandCoverData {
+            grid: vec![vec![land_cover::LC_WATER, 10], vec![10, 10]],
+            water_distance: vec![vec![1, 0], vec![0, 0]],
+            water_blend_cache: once_cell::sync::OnceCell::new(),
+            width: 2,
+            height: 2,
+            cells_per_meter: 0.5,
+        });
+        let mut args = Args::parse_from(["arnis"]);
+        args.aws_only_elevation = true;
+        (ground, args, LLBBox::new(40.0, -74.0, 41.0, -73.0).unwrap())
+    }
+
+    #[test]
+    fn master_export_roundtrip_preserves_processed_snapshot() {
+        let (mut ground, args, bbox) = export_fixture();
+        // Model the final bridge/OSM repair, after floors and affine were decided.
+        ground.elevation_data.as_mut().unwrap().heights[0][0] = 81.0;
+        let grid = ground
+            .to_master_grid(&bbox, &args, &"a".repeat(64), &"b".repeat(64))
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("master.grid");
+        crate::elevation::master_grid::save(&path, &grid).unwrap();
+        let tile = crate::elevation::master_grid::load_slice(&path, 0, 0, 2, 2).unwrap();
+        assert_eq!(tile.elevation, vec![81.0, 74.0, 76.0, 78.0]);
+        assert_eq!(tile.metadata.water_floor, 68);
+        assert_eq!(tile.metadata.sink_floor, 65);
+        assert_eq!(tile.metadata.min_height_m, -3.0);
+        assert_eq!(tile.metadata.blocks_per_meter, 2.0);
+        assert_eq!(tile.metadata.effective_ground_level, 70);
+        assert_eq!(tile.metadata.sea_level_y, 76.0);
+        assert_eq!(tile.metadata.climate, "Boreal");
+        assert_eq!(tile.metadata.snow_threshold_y, 234);
+        assert_eq!(tile.metadata.climate_anchor, [40.5, -73.5]);
+        assert_eq!(tile.metadata.selected_provider, "aws");
+        assert_eq!(tile.metadata.provider_attempts[0].outcome, "success");
+        assert_eq!(tile.land_cover, vec![land_cover::LC_WATER, 10, 10, 10]);
+        assert_eq!(tile.water_distance, vec![1, 0, 0, 0]);
+        assert_eq!(
+            tile.water_blend,
+            ground
+                .land_cover
+                .as_ref()
+                .unwrap()
+                .water_blend_grid()
+                .iter()
+                .flatten()
+                .copied()
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn master_export_rejects_incomplete_or_unsupported_ground() {
+        let (ground, args, bbox) = export_fixture();
+        let export =
+            |g: &Ground, a: &Args| g.to_master_grid(&bbox, a, &"a".repeat(64), &"b".repeat(64));
+        assert!(export(&Ground::new_flat(62), &args).is_err());
+        let mut bad = ground.clone();
+        bad.export_context = None;
+        assert!(export(&bad, &args).is_err());
+        let mut bad = ground.clone();
+        bad.land_cover = None;
+        assert!(export(&bad, &args).is_err());
+        let mut bad = ground.clone();
+        bad.world_width = 4;
+        assert!(export(&bad, &args).is_err());
+        let mut bad = ground.clone();
+        bad.world_width = 4097;
+        bad.world_height = 4097;
+        let ed = bad.elevation_data.as_mut().unwrap();
+        ed.width = 4097;
+        ed.height = 4097;
+        ed.world_width = 4097;
+        ed.world_height = 4097;
+        let lc = bad.land_cover.as_mut().unwrap();
+        lc.width = 4097;
+        lc.height = 4097;
+        assert!(export(&bad, &args)
+            .unwrap_err()
+            .to_string()
+            .contains("profile limits"));
+        let mut bad = ground.clone();
+        bad.elevation_data.as_mut().unwrap().heights[0][0] = f32::NAN;
+        assert!(export(&bad, &args).is_err());
+        let (_, mut auto, _) = export_fixture();
+        auto.aws_only_elevation = false;
+        assert!(export(&ground, &auto).is_err());
+        let mut bad = ground.clone();
+        bad.export_context.as_mut().unwrap().aws_only = false;
+        assert!(export(&bad, &args).is_err());
     }
 
     // An unmeasured cell hands the decision back to the land cover.
@@ -1153,5 +1326,309 @@ mod tests {
         // Flat terrain: never below the line, always above it.
         assert_eq!(snow_threshold_for(&ed(100.0, 0.0), 46.0, 64), i32::MAX);
         assert_eq!(snow_threshold_for(&ed(4000.0, 0.0), 46.0, 64), i32::MIN);
+    }
+}
+
+#[cfg(test)]
+mod tiler_master_tests {
+    use super::*;
+    use crate::elevation::master_grid::{load_slice, save, tests::fixture};
+
+    fn differently_sized_slices() -> Vec<Ground> {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("master");
+        let mut grid = fixture();
+        grid.metadata.width = 24;
+        grid.metadata.height = 24;
+        grid.metadata.world_width = 24;
+        grid.metadata.world_height = 24;
+        grid.metadata.payload_bytes = 24 * 24 * 10;
+        grid.elevation = vec![60.5; 24 * 24];
+        grid.land_cover = vec![10; 24 * 24];
+        grid.water_distance = vec![0; 24 * 24];
+        grid.water_blend = vec![0.0; 24 * 24];
+        let shared = 15 * 24 + 15;
+        grid.elevation[shared] = 70.5;
+        grid.land_cover[shared] = land_cover::LC_WATER;
+        grid.water_distance[shared] = 7;
+        grid.water_blend[shared] = 0.5;
+        save(&path, &grid).unwrap();
+        [23, 24]
+            .into_iter()
+            .map(|width| {
+                Ground::from_master_slice(load_slice(&path, 0, 0, width, width).unwrap()).unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn master_integer_heights_do_not_depend_on_slice_dimensions() {
+        for ground in differently_sized_slices() {
+            assert_eq!(ground.level(XZPoint::new(15, 15)), 71);
+            assert_eq!(ground.level(XZPoint::new(-1, -1)), 61);
+            assert_eq!(ground.level(XZPoint::new(i32::MAX, i32::MAX)), 61);
+        }
+    }
+
+    #[test]
+    fn master_integer_water_bands_are_exact_across_slice_dimensions() {
+        for ground in differently_sized_slices() {
+            let shared = XZPoint::new(15, 15);
+            assert_eq!(ground.water_blend(shared), 0.5);
+            assert_eq!(ground.cover_class(shared), land_cover::LC_WATER);
+            assert_eq!(ground.water_distance(shared), 7);
+            for edge in [XZPoint::new(-1, -1), XZPoint::new(i32::MAX, i32::MAX)] {
+                assert_eq!(ground.water_blend(edge), 0.0);
+                assert_eq!(ground.cover_class(edge), 10);
+                assert_eq!(ground.water_distance(edge), 0);
+            }
+        }
+    }
+
+    #[test]
+    fn master_slice_preserves_shared_height_masks_and_climate() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("master");
+        let grid = fixture();
+        save(&path, &grid).unwrap();
+        let tile = load_slice(&path, 1, 1, 2, 2).unwrap();
+        let heights = tile.elevation.clone();
+        let blend = tile.water_blend.clone();
+        let snow = tile.metadata.snow_threshold_y;
+        let base = tile.metadata.effective_ground_level;
+        let mut ground = Ground::from_master_slice(tile).unwrap();
+        assert_eq!(ground.base_level(), base);
+        assert_eq!(ground.snow_threshold_y(), snow);
+        assert_eq!(ground.level(XZPoint::new(0, 0)), heights[0].round() as i32);
+        assert_eq!(ground.level(XZPoint::new(1, 1)), heights[3].round() as i32);
+        assert_eq!(
+            ground.land_cover.as_ref().unwrap().water_blend_grid()[0][0],
+            blend[0]
+        );
+        let before = ground.elevation_data.as_ref().unwrap().heights.clone();
+        let bbox = XZBBox::rect_from_min_max(0, 0, 1, 1).unwrap();
+        ground.apply_osm_water_override(&[], &bbox);
+        ground.apply_osm_land_override(&[], &bbox, 1.0);
+        ground.apply_bridge_land_cover_repair(&[], &bbox, 1.0);
+        assert_eq!(ground.elevation_data.as_ref().unwrap().heights, before);
+        assert!(ground.immutable_master);
+    }
+}
+
+impl Ground {
+    /// Snapshot the complete master after the caller applies OSM and bridge repairs.
+    /// Floors and affine parameters are retained from the original elevation pass.
+    pub(crate) fn to_master_grid(
+        &self,
+        bbox: &LLBBox,
+        args: &Args,
+        source_hash: &str,
+        profile_hash: &str,
+    ) -> std::io::Result<crate::elevation::master_grid::Grid> {
+        use crate::elevation::master_grid::{Grid, Metadata, ProviderAttempt, MAX_CELLS};
+        let invalid = |message: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, message);
+        if !self.elevation_enabled || self.immutable_master || self.rotation_mask.is_some() {
+            return Err(invalid(
+                "export requires a complete unrotated elevation master",
+            ));
+        }
+        let ed = self
+            .elevation_data
+            .as_ref()
+            .ok_or_else(|| invalid("missing elevation data"))?;
+        let lc = self
+            .land_cover
+            .as_ref()
+            .ok_or_else(|| invalid("missing processed land cover"))?;
+        let context = self
+            .export_context
+            .as_ref()
+            .ok_or_else(|| invalid("missing global floor/provider context"))?;
+        if !args.aws_only_elevation || !context.aws_only {
+            return Err(invalid(
+                "master export supports only actual AWS-only terrain",
+            ));
+        }
+        let cells = ed
+            .width
+            .checked_mul(ed.height)
+            .ok_or_else(|| invalid("master dimensions overflow"))?;
+        if ed.width < 2
+            || ed.height < 2
+            || ed.width > 16_384
+            || ed.height > 16_384
+            || cells as u64 > MAX_CELLS
+            || ed.width != ed.world_width
+            || ed.height != ed.world_height
+            || ed.width != self.world_width
+            || ed.height != self.world_height
+            || ed.width != lc.width
+            || ed.height != lc.height
+        {
+            return Err(invalid(
+                "master requires aligned full-resolution bands within profile limits",
+            ));
+        }
+        if ed.heights.len() != ed.height
+            || ed.heights.iter().any(|r| r.len() != ed.width)
+            || lc.grid.len() != ed.height
+            || lc.grid.iter().any(|r| r.len() != ed.width)
+            || lc.water_distance.len() != ed.height
+            || lc.water_distance.iter().any(|r| r.len() != ed.width)
+        {
+            return Err(invalid("master band dimensions mismatch"));
+        }
+        if self.ground_level != ed.ground_level
+            || ed.heights.iter().flatten().any(|v| !v.is_finite())
+        {
+            return Err(invalid("invalid effective elevation data"));
+        }
+        let south = bbox.min().lat();
+        let west = bbox.min().lng();
+        let north = bbox.max().lat();
+        let east = bbox.max().lng();
+        let metadata = Metadata {
+            format_version: 2,
+            contract: "arnis-tiler/v3.1/1".into(),
+            bbox: [south, west, north, east],
+            width: ed.width as u32,
+            height: ed.height as u32,
+            world_width: ed.world_width as u32,
+            world_height: ed.world_height as u32,
+            scale: args.scale,
+            projection: "local".into(),
+            orientation: "northwest-row-major".into(),
+            min_height_m: ed.min_height_m,
+            blocks_per_meter: ed.blocks_per_meter,
+            effective_ground_level: self.ground_level,
+            requested_ground_level: args.ground_level,
+            min_ground_level: min_ground_level_for(args),
+            extended_max_y: extended_max_y_for(args),
+            water_floor: context.water_floor,
+            sink_floor: context.sink_floor,
+            sea_level_y: self.ground_level as f64 - ed.min_height_m * ed.blocks_per_meter,
+            source_mode: "aws-only".into(),
+            selected_provider: "aws".into(),
+            provider_attempts: vec![ProviderAttempt {
+                name: "aws".into(),
+                outcome: "success".into(),
+            }],
+            source_manifest_sha256: source_hash.into(),
+            profile_sha256: profile_hash.into(),
+            postprocess: "master-once-v1".into(),
+            height_units: "minecraft_y".into(),
+            payload_bytes: cells as u64 * 10,
+            land_cover_cells_per_meter: lc.cells_per_meter,
+            climate: format!("{:?}", self.climate),
+            snow_threshold_y: self.snow_threshold_y,
+            climate_anchor: [(south + north) / 2.0, (west + east) / 2.0],
+        };
+        metadata.validate()?;
+        // Materialize lazily cached blending only after all master mask repairs.
+        let blend = lc.water_blend_grid();
+        if blend.len() != ed.height
+            || blend.iter().any(|r| r.len() != ed.width)
+            || blend
+                .iter()
+                .flatten()
+                .any(|v| !v.is_finite() || !(0.0..=1.0).contains(v))
+            || lc.water_distance.iter().flatten().any(|v| *v > 15)
+        {
+            return Err(invalid("invalid processed water bands"));
+        }
+        Ok(Grid {
+            metadata,
+            elevation: ed.heights.iter().flatten().copied().collect(),
+            land_cover: lc.grid.iter().flatten().copied().collect(),
+            water_distance: lc.water_distance.iter().flatten().copied().collect(),
+            water_blend: blend.iter().flatten().copied().collect(),
+        })
+    }
+
+    /// Construct a tile from admitted processed bands without provider access or rescaling.
+    pub(crate) fn from_master_slice(
+        tile: crate::elevation::master_grid::TileGrid,
+    ) -> std::io::Result<Self> {
+        use crate::climate::Climate;
+        let width = tile.width as usize;
+        let height = tile.height as usize;
+        let cells = width
+            .checked_mul(height)
+            .ok_or_else(|| std::io::Error::other("tile dimensions overflow"))?;
+        tile.metadata.validate()?;
+        if width < 2
+            || height < 2
+            || [
+                tile.elevation.len(),
+                tile.land_cover.len(),
+                tile.water_distance.len(),
+                tile.water_blend.len(),
+            ]
+            .iter()
+            .any(|n| *n != cells)
+        {
+            return Err(std::io::Error::other("invalid admitted tile band lengths"));
+        }
+        let climate = match tile.metadata.climate.as_str() {
+            "Temperate" => Climate::Temperate,
+            "TropicalSavanna" => Climate::TropicalSavanna,
+            "HotDesert" => Climate::HotDesert,
+            "HotSteppe" => Climate::HotSteppe,
+            "ColdDesert" => Climate::ColdDesert,
+            "ColdSteppe" => Climate::ColdSteppe,
+            "DryContinental" => Climate::DryContinental,
+            "Boreal" => Climate::Boreal,
+            "Tundra" => Climate::Tundra,
+            "IceCap" => Climate::IceCap,
+            _ => return Err(std::io::Error::other("invalid master climate")),
+        };
+        let meta = tile.metadata;
+        Ok(Self {
+            elevation_enabled: true,
+            ground_level: meta.effective_ground_level,
+            elevation_data: Some(ElevationData {
+                heights: tile
+                    .elevation
+                    .chunks_exact(width)
+                    .map(<[f32]>::to_vec)
+                    .collect(),
+                width,
+                height,
+                world_width: width,
+                world_height: height,
+                min_height_m: meta.min_height_m,
+                blocks_per_meter: meta.blocks_per_meter,
+                ground_level: meta.effective_ground_level,
+            }),
+            land_cover: Some(LandCoverData {
+                grid: tile
+                    .land_cover
+                    .chunks_exact(width)
+                    .map(<[u8]>::to_vec)
+                    .collect(),
+                water_distance: tile
+                    .water_distance
+                    .chunks_exact(width)
+                    .map(<[u8]>::to_vec)
+                    .collect(),
+                water_blend_cache: once_cell::sync::OnceCell::from(
+                    tile.water_blend
+                        .chunks_exact(width)
+                        .map(<[f32]>::to_vec)
+                        .collect::<Vec<_>>(),
+                ),
+                width,
+                height,
+                cells_per_meter: meta.land_cover_cells_per_meter,
+            }),
+            canopy: None,
+            world_width: width,
+            world_height: height,
+            rotation_mask: None,
+            immutable_master: true,
+            export_context: None,
+            snow_threshold_y: meta.snow_threshold_y,
+            climate,
+        })
     }
 }

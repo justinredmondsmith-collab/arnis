@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "contract": "arnis-tiler/v3.1/1",
+  "upstream": {
+    "version": "3.1.0",
+    "commit": "3918513acb4e5e9ef4332418531a7c444d2b5acf"
+  },
+  "build": {
+    "commit": "0000000000000000000000000000000000000000",
+    "dirty": true,
+    "target": "x86_64-unknown-linux-gnu",
+    "rustc": "rustc EXAMPLE"
+  },
+  "java": {
+    "minecraft_version": "1.21.1",
+    "data_version": 3955
+  },
+  "capabilities": [
+    "master_grid_save",
+    "fetch_only",
+    "master_grid_slice",
+    "tile_master_offset",
+    "tile_dimension_override",
+    "tiled_postprocess",
+    "skip_railways",
+    "no_ores",
+    "suppress_tile_metadata"
+  ],
+  "grid": {
+    "format": "ARNTGRID2",
+    "scalar": "f32",
+    "endian": "little",
+    "height_units": "minecraft_y",
+    "integrity": "sha256",
+    "provider_max_axis": 16384,
+    "provider_max_cells": 268435456,
+    "metadata_max_bytes": 1048576,
+    "bands": [
+      "elevation-f32",
+      "land-cover-u8",
+      "water-distance-u8",
+      "water-blend-f32"
+    ]
+  },
+  "coordinates": {
+    "projection": "local",
+    "bbox_order": "south,west,north,east",
+    "origin": "northwest",
+    "x_direction": "east",
+    "z_direction": "south",
+    "slice": "integer-half-open",
+    "cell_to_block": "one-to-one"
+  },
+  "railways": {
+    "values": [
+      "all",
+      "rail",
+      "subway",
+      "tram",
+      "light_rail",
+      "narrow_gauge",
+      "monorail",
+      "funicular",
+      "preserved",
+      "disused",
+      "abandoned",
+      "construction",
+      "miniature"
+    ],
+    "domains": [
+      "track",
+      "bridge",
+      "tunnel_shell",
+      "tunnel_carve",
+      "power_line"
+    ]
+  },
+  "ore_policy": "no-ores-skips-all-fillground-veins",
+  "tile_metadata": "no-maps-signage-branding-or-global-settings",
+  "profile": "nyc-conservative-v1",
+  "exit_codes": {
+    "success": 0,
+    "malformed": 2,
+    "incompatible": 3,
+    "io_or_generation": 1
+  }
+}

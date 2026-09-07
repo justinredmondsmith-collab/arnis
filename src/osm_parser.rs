@@ -799,12 +799,13 @@ pub fn arch_era_from_hint(hint: StyleHint) -> ArchEra {
     }
 }
 
-pub fn parse_osm_data(
+fn parse_osm_data_inner(
     osm_data: OsmData,
     bbox: LLBBox,
     scale: f64,
     debug: bool,
     projection: crate::projection::ProjectionKind,
+    frame: Option<(CoordTransformer, XZBBox)>,
 ) -> (
     Vec<ProcessedElement>,
     XZBBox,
@@ -817,21 +818,24 @@ pub fn parse_osm_data(
     // Deserialize the JSON data into the OSMData structure
     let data = SplitOsmData::from_raw_osm_data(osm_data);
 
-    let (coord_transformer, xzbbox) = match projection {
-        crate::projection::ProjectionKind::WebMercator => {
-            let origin_lat = (bbox.min().lat() + bbox.max().lat()) / 2.0;
-            let origin_lon = (bbox.min().lng() + bbox.max().lng()) / 2.0;
-            let proj = crate::projection::WebMercatorProjection::new(origin_lat, origin_lon, scale);
-            CoordTransformer::with_projection(&bbox, scale, &proj)
+    let (coord_transformer, xzbbox) = frame.unwrap_or_else(|| {
+        match projection {
+            crate::projection::ProjectionKind::WebMercator => {
+                let origin_lat = (bbox.min().lat() + bbox.max().lat()) / 2.0;
+                let origin_lon = (bbox.min().lng() + bbox.max().lng()) / 2.0;
+                let proj =
+                    crate::projection::WebMercatorProjection::new(origin_lat, origin_lon, scale);
+                CoordTransformer::with_projection(&bbox, scale, &proj)
+            }
+            crate::projection::ProjectionKind::Local => {
+                CoordTransformer::llbbox_to_xzbbox(&bbox, scale)
+            }
         }
-        crate::projection::ProjectionKind::Local => {
-            CoordTransformer::llbbox_to_xzbbox(&bbox, scale)
-        }
-    }
-    // Panics rather than exits: the GUI calls this from a Tauri blocking task, where an
-    // exit would take the whole app down. Bad scales are rejected up front by validate_scale.
-    .unwrap_or_else(|e| {
-        panic!("Error in defining coordinate transformation:\n{e}");
+        // Panics rather than exits: the GUI calls this from a Tauri blocking task, where an
+        // exit would take the whole app down. Bad scales are rejected up front by validate_scale.
+        .unwrap_or_else(|e| {
+            panic!("Error in defining coordinate transformation:\n{e}");
+        })
     });
 
     if debug {
@@ -2501,4 +2505,57 @@ mod arch_era_tests {
         assert_eq!(arch_era_from_hint(StyleHint::Glass), ArchEra::Contemporary);
         assert_eq!(arch_era_from_hint(StyleHint::None), ArchEra::Unknown);
     }
+}
+
+#[cfg(test)]
+mod tiler_parse_tests {
+    use super::*;
+    #[test]
+    fn osm_uses_exact_master_frame_dimensions() {
+        let bbox = LLBBox::from_str("40,-74,40.001,-73.999").unwrap();
+        let data:OsmData=serde_json::from_str(r#"{"elements":[{"type":"node","id":1,"lat":40.0,"lon":-73.999,"tags":{"amenity":"bench"}}]}"#).unwrap();
+        let (frame, bounds) = CoordTransformer::for_master_tile(&bbox, 32, 64).unwrap();
+        let (elements, got, _, _) = parse_osm_data_with_frame(data, bbox, 1.0, frame, bounds);
+        assert_eq!((got.max_x(), got.max_z()), (31, 63));
+        assert!(elements
+            .iter()
+            .any(|e| matches!(e,ProcessedElement::Node(n) if n.id==1 && n.x==31 && n.z==63)));
+    }
+}
+
+pub fn parse_osm_data(
+    osm_data: OsmData,
+    bbox: LLBBox,
+    scale: f64,
+    debug: bool,
+    projection: crate::projection::ProjectionKind,
+) -> (
+    Vec<ProcessedElement>,
+    XZBBox,
+    OutlineSuppression,
+    PartGroups,
+) {
+    parse_osm_data_inner(osm_data, bbox, scale, debug, projection, None)
+}
+
+pub(crate) fn parse_osm_data_with_frame(
+    osm_data: OsmData,
+    bbox: LLBBox,
+    scale: f64,
+    frame: CoordTransformer,
+    bounds: XZBBox,
+) -> (
+    Vec<ProcessedElement>,
+    XZBBox,
+    OutlineSuppression,
+    PartGroups,
+) {
+    parse_osm_data_inner(
+        osm_data,
+        bbox,
+        scale,
+        false,
+        crate::projection::ProjectionKind::Local,
+        Some((frame, bounds)),
+    )
 }
