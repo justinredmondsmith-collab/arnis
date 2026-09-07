@@ -6271,6 +6271,7 @@ fn generate_floors_and_ceilings(
     editor: &mut WorldEditor,
     cached_floor_area: &[(i32, i32)],
     config: &BuildingConfig,
+    args: &Args,
     generate_non_flat_roof: bool,
     building_passages: &CoordinateBitmap,
 ) -> HashSet<(i32, i32)> {
@@ -6293,6 +6294,17 @@ fn generate_floors_and_ceilings(
         // Set ground floor - skip in passage zones (the road surface is placed
         // by the highway processor instead).
         if !is_passage {
+            // Perimeter foundations do not support an interior spanning lower terrain.
+            // Use the editor's terrain origin, and never fill passages or elevated parts.
+            if args.terrain() && config.is_ground_level {
+                if let Some(terrain_y) = editor.terrain_level(x, z) {
+                    let floor_y = config.start_y_offset + config.abs_terrain_offset;
+                    for y in terrain_y..floor_y {
+                        let block = apply_block_variety(config.wall_block, x, y, z, config);
+                        editor.set_block_if_absent_absolute(block, x, y, z);
+                    }
+                }
+            }
             editor.set_block_absolute(
                 config.floor_block,
                 x,
@@ -7109,6 +7121,7 @@ pub fn generate_buildings(
             editor,
             &cached_floor_area,
             &config,
+            args,
             style.generate_roof,
             effective_passages,
         );
@@ -11158,6 +11171,69 @@ mod style_tests {
         let xz = XZBBox::rect_from_xz_lengths(50.0, 50.0).unwrap();
         let editor = test_editor_at(&xz, LLBBox::new(22.9, 12.9, 23.1, 13.1).unwrap());
         assert_eq!(editor.climate(), Climate::HotDesert);
+    }
+
+    #[test]
+    fn interior_foundation_supports_slopes_without_filling_passages_or_elevated_parts() {
+        use crate::coordinate_system::{cartesian::XZBBox, geographic::LLBBox};
+        use crate::ground::Ground;
+        use clap::Parser;
+        use std::sync::Arc;
+        for (ox, oz) in [(0, 0), (32, 48)] {
+            let bounds = XZBBox::rect_from_min_max(ox, oz, ox + 15, oz + 15).unwrap();
+            let ll = LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+            let heights = (0..16)
+                .map(|_| (0..16).map(|x| if x < 8 { 70.0 } else { 75.0 }).collect())
+                .collect();
+            let ground = Ground::new_elevation_test(heights, 16, 16);
+            for (elevated, terrain) in [(false, true), (true, true), (false, false)] {
+                let args = Args::parse_from([
+                    "arnis",
+                    "--mode",
+                    if terrain { "geo-terrain" } else { "geo-only" },
+                ]);
+                let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+                editor.set_ground(Arc::new(ground.clone()));
+                let mut config = test_config(8, false, false);
+                config.start_y_offset = 75;
+                config.is_ground_level = !elevated;
+                let mut passages = CoordinateBitmap::new(&bounds);
+                passages.set(ox + 5, oz + 5);
+                let area = [(ox + 4, oz + 4), (ox + 5, oz + 5), (ox + 9, oz + 4)];
+                editor.set_block_absolute(STONE, ox + 4, 72, oz + 4, None, Some(&[]));
+                generate_floors_and_ceilings(&mut editor, &area, &config, &args, false, &passages);
+                assert_eq!(
+                    editor.get_block_absolute(ox + 4, 72, oz + 4),
+                    Some(STONE),
+                    "protected block overwritten"
+                );
+                assert_eq!(
+                    editor.get_block_absolute(ox + 4, 75, oz + 4),
+                    Some(config.floor_block)
+                );
+                for y in 70..75 {
+                    if !elevated && terrain {
+                        assert!(
+                            editor.get_block_absolute(ox + 4, y, oz + 4).is_some(),
+                            "unsupported floor at {ox},{oz}, y{y}"
+                        );
+                    } else if y != 72 {
+                        assert!(
+                            editor.get_block_absolute(ox + 4, y, oz + 4).is_none(),
+                            "elevated part filled"
+                        );
+                    }
+                    assert!(
+                        editor.get_block_absolute(ox + 5, y, oz + 5).is_none(),
+                        "passage filled"
+                    );
+                    assert!(
+                        editor.get_block_absolute(ox + 9, y, oz + 4).is_none(),
+                        "flat column filled below terrain"
+                    );
+                }
+            }
+        }
     }
 
     fn test_config(height: i32, attic: bool, top: bool) -> BuildingConfig {

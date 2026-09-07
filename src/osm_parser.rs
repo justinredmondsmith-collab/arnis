@@ -1019,7 +1019,11 @@ fn parse_osm_data_inner(
         let is_building_multipolygon = (tags.contains_key("building")
             || tags.contains_key("building:part"))
             && relation_type == Some("multipolygon");
-        let keep_unclipped = is_water_relation || is_building_multipolygon;
+        // Pier multipolygons assemble and validate full rings before bounded fill.
+        // Clipping fragments here breaks crossing outlines and drops enclosing ones.
+        let is_pier_multipolygon = relation_type == Some("multipolygon")
+            && tags.get("man_made").map(String::as_str) == Some("pier");
+        let keep_unclipped = is_water_relation || is_building_multipolygon || is_pier_multipolygon;
 
         let members: Vec<ProcessedMember> = element
             .members
@@ -2510,6 +2514,107 @@ mod arch_era_tests {
 #[cfg(test)]
 mod tiler_parse_tests {
     use super::*;
+    fn parsed_pier_blocks(enclosing: bool) {
+        use crate::block_definitions::{OAK_LOG, OAK_SLAB};
+        use crate::elevation::master_grid;
+        use clap::Parser;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("master");
+        let mut grid = master_grid::tests::fixture();
+        grid.metadata.width = 32;
+        grid.metadata.height = 32;
+        grid.metadata.world_width = 32;
+        grid.metadata.world_height = 32;
+        grid.metadata.payload_bytes = 32 * 32 * 10;
+        grid.elevation = vec![70.0; 32 * 32];
+        grid.land_cover = vec![80; 32 * 32];
+        grid.water_distance = vec![5; 32 * 32];
+        grid.water_blend = vec![1.0; 32 * 32];
+        master_grid::save(&path, &grid).unwrap();
+        let bbox = LLBBox::from_str("40,-74,41,-73").unwrap();
+        let outer = if enclosing {
+            [(0, 0), (31, 0), (31, 31), (0, 31)]
+        } else {
+            [(0, 10), (26, 10), (26, 25), (0, 25)]
+        };
+        let mut raw = Vec::new();
+        for (i, &(x, z)) in outer
+            .iter()
+            .chain([(12, 12), (16, 12), (16, 16), (12, 16)].iter())
+            .enumerate()
+        {
+            raw.push(serde_json::json!({"type":"node","id":i+1,"lat":41.0-f64::from(z)/31.0,"lon":-74.0+f64::from(x)/31.0}));
+        }
+        let mut members = Vec::new();
+        for i in 0..4 {
+            raw.push(serde_json::json!({"type":"way","id":100+i,"nodes":[i+1,(i+1)%4+1]}));
+            members.push(serde_json::json!({"type":"way","ref":100+i,"role":"outer"}));
+        }
+        raw.push(serde_json::json!({"type":"way","id":200,"nodes":[5,6,7,8,5]}));
+        members.push(serde_json::json!({"type":"way","ref":200,"role":"inner"}));
+        raw.push(serde_json::json!({"type":"relation","id":300,"tags":{"type":"multipolygon","man_made":"pier"},"members":members}));
+        let raw = serde_json::json!({"elements":raw});
+        let mut outputs = Vec::new();
+        for (col, row) in [(3, 5), (6, 7)] {
+            let data: OsmData = serde_json::from_value(raw.clone()).unwrap();
+            let (frame, bounds) =
+                CoordTransformer::for_master_slice(&bbox, 32, 32, col, row, 17, 17).unwrap();
+            let (elements, bounds, _, _) =
+                parse_osm_data_with_frame(data, bbox, 1.0, frame, bounds);
+            let mut editor =
+                crate::world_editor::WorldEditor::new("/dev/null/unused".into(), &bounds, bbox);
+            let ground = crate::ground::Ground::from_master_slice(
+                master_grid::load_slice(&path, col, row, 17, 17).unwrap(),
+            )
+            .unwrap();
+            editor.set_ground(Arc::new(ground));
+            editor.set_external_tile(true);
+            for element in &elements {
+                if matches!(element, ProcessedElement::Relation(_)) {
+                    crate::element_processing::man_made::generate_man_made(
+                        &mut editor,
+                        element,
+                        &crate::args::Args::parse_from(["arnis"]),
+                    );
+                }
+            }
+            let mut blocks = HashMap::new();
+            for x in 6..=19 {
+                for z in 7..=21 {
+                    for y in 70..=71 {
+                        if let Some(block) =
+                            editor.get_block_absolute(x - col as i32, y, z - row as i32)
+                        {
+                            blocks.insert((x, y, z), block);
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                blocks.get(&(8, 71, 12)),
+                Some(&OAK_SLAB),
+                "raw OSM pier lost at slice ({col},{row})"
+            );
+            assert_eq!(blocks.get(&(8, 70, 12)), Some(&OAK_LOG));
+            assert!(!blocks.contains_key(&(12, 71, 12)), "inner hole was filled");
+            if !enclosing {
+                assert!(!blocks.contains_key(&(8, 71, 8)));
+            }
+            outputs.push(blocks);
+        }
+        assert_eq!(outputs[0], outputs[1], "parsed overlapping slices disagree");
+    }
+
+    #[test]
+    fn pier_raw_osm_crossing_fragments_survive_tile_parser() {
+        parsed_pier_blocks(false);
+    }
+
+    #[test]
+    fn pier_raw_osm_enclosing_ring_survives_tile_parser() {
+        parsed_pier_blocks(true);
+    }
+
     #[test]
     fn osm_uses_exact_master_frame_dimensions() {
         let bbox = LLBBox::from_str("40,-74,40.001,-73.999").unwrap();

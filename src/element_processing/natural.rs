@@ -18,6 +18,13 @@ pub fn generate_natural(
     bridge_surface: &BridgeSurfaceMap,
 ) {
     if let Some(natural_type) = element.tags().get("natural") {
+        // Water naming features are not land surfaces. Relation outer members
+        // also pass through here; actual water bodies use the water dispatcher.
+        // This semantic guard does not establish any historical artifact's cause.
+        if matches!(natural_type.as_str(), "strait" | "bay" | "sound" | "fjord") {
+            return;
+        }
+
         if natural_type == "tree" {
             if let ProcessedElement::Node(node) = element {
                 let x: i32 = node.x;
@@ -889,5 +896,133 @@ mod tests {
         assert!(!try_place_wetland_puddle(&mut editor, 4, 4));
         assert!(try_place_wetland_puddle(&mut editor, 5, 5));
         assert!(editor.check_for_block(5, 0, 5, Some(&[WATER])));
+    }
+}
+
+#[cfg(test)]
+mod water_label_tests {
+    use super::*;
+
+    use crate::coordinate_system::cartesian::XZBBox;
+    use crate::coordinate_system::geographic::LLBBox;
+    use crate::element_processing::bridges::BridgeStructureMap;
+    use crate::osm_parser::ProcessedNode;
+    use clap::Parser;
+    use std::collections::HashMap;
+
+    fn fixture() -> (WorldEditor<'static>, Args, BridgeSurfaceMap) {
+        static BBOX: std::sync::LazyLock<XZBBox> =
+            std::sync::LazyLock::new(|| XZBBox::rect_from_min_max(0, 0, 15, 15).unwrap());
+        let editor = WorldEditor::new(
+            std::path::PathBuf::from("/dev/null/unused"),
+            &BBOX,
+            LLBBox::new(54.6, 9.9, 54.61, 9.91).unwrap(),
+        );
+        let outlines = crate::element_processing::bridge_styles::BridgeOutlineIndex::build(&[]);
+        let structures = BridgeStructureMap::build(&[], &editor, &outlines);
+        let bridges = BridgeSurfaceMap::build(&[], &structures, 1.0);
+        (
+            editor,
+            Args::parse_from(["arnis", "--bbox", "1,2,3,4"]),
+            bridges,
+        )
+    }
+
+    fn ring(tags: &[(&str, &str)]) -> ProcessedWay {
+        ProcessedWay {
+            id: 42,
+            tags: tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            nodes: [(1, 2, 2), (2, 10, 2), (3, 10, 10), (4, 2, 10), (1, 2, 2)]
+                .into_iter()
+                .map(|(id, x, z)| ProcessedNode {
+                    id,
+                    x,
+                    z,
+                    tags: HashMap::new(),
+                })
+                .collect(),
+        }
+    }
+
+    fn assert_empty(editor: &WorldEditor) {
+        for x in 0..=15 {
+            for z in 0..=15 {
+                for y in 0..=3 {
+                    assert!(
+                        !editor.block_exists_absolute(x, y, z),
+                        "unexpected block at {x},{y},{z}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn water_labels_paint_nothing_for_open_closed_and_relation_geometry() {
+        for label in ["strait", "bay", "sound", "fjord"] {
+            for closed in [false, true] {
+                for relation in [false, true] {
+                    let (mut editor, args, bridges) = fixture();
+                    let mut way = ring(&[("natural", label)]);
+                    if !closed {
+                        way.nodes.truncate(3);
+                    }
+                    let cache = FloodFillCache::new();
+                    let footprints = BuildingFootprintBitmap::new_empty();
+                    if relation {
+                        let rel = ProcessedRelation {
+                            id: 99,
+                            tags: way.tags.clone(),
+                            members: vec![crate::osm_parser::ProcessedMember {
+                                role: ProcessedMemberRole::Outer,
+                                way: std::sync::Arc::new(way),
+                            }],
+                        };
+                        generate_natural_from_relation(
+                            &mut editor,
+                            &rel,
+                            &args,
+                            &cache,
+                            &footprints,
+                            &bridges,
+                        );
+                    } else {
+                        generate_natural(
+                            &mut editor,
+                            &ProcessedElement::Way(way),
+                            &args,
+                            &cache,
+                            &footprints,
+                            &bridges,
+                        );
+                    }
+                    assert_empty(&editor);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scrub_and_cape_keep_land_generation() {
+        for natural in ["scrub", "cape"] {
+            let (mut editor, args, bridges) = fixture();
+            generate_natural(
+                &mut editor,
+                &ProcessedElement::Way(ring(&[("natural", natural)])),
+                &args,
+                &FloodFillCache::new(),
+                &BuildingFootprintBitmap::new_empty(),
+                &bridges,
+            );
+            for (x, z) in [(2, 2), (5, 5)] {
+                assert!(
+                    editor.check_for_block(x, 0, z, Some(&[GRASS_BLOCK])),
+                    "{natural}"
+                );
+            }
+        }
     }
 }

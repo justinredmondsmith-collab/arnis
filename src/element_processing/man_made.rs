@@ -1,7 +1,9 @@
 use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
-use crate::osm_parser::{ProcessedElement, ProcessedNode, ProcessedWay};
+use crate::osm_parser::{
+    ProcessedElement, ProcessedMemberRole, ProcessedNode, ProcessedRelation, ProcessedWay,
+};
 use crate::world_editor::WorldEditor;
 use std::collections::HashSet;
 
@@ -53,6 +55,10 @@ fn place_lighthouse_way(editor: &mut WorldEditor, element: &ProcessedElement) {
 
 /// Generate a pier structure with OAK_SLAB planks and OAK_LOG support pillars
 fn generate_pier(editor: &mut WorldEditor, element: &ProcessedElement) {
+    if let ProcessedElement::Relation(relation) = element {
+        generate_pier_relation(editor, relation);
+        return;
+    }
     if let ProcessedElement::Way(way) = element {
         let nodes = &way.nodes;
         if nodes.len() < 2 {
@@ -100,6 +106,135 @@ fn generate_pier(editor: &mut WorldEditor, element: &ProcessedElement) {
                         // Support pillars going down from pier level
                         editor.set_block(OAK_LOG, pillar_x, 0, *pillar_z, None, None);
                     }
+                }
+            }
+        }
+    }
+}
+
+/// Assemble exact-coordinate fragments before rasterization. Every open endpoint
+/// must have exactly two incident fragments: dangling or branching outlines fail
+/// closed rather than choosing a member-order-dependent artificial connection.
+fn pier_rings(
+    relation: &ProcessedRelation,
+    role: ProcessedMemberRole,
+) -> Option<Vec<geo::LineString<f64>>> {
+    use std::collections::HashMap;
+    let mut fragments: Vec<Vec<(i32, i32)>> = relation
+        .members
+        .iter()
+        .filter(|member| member.role == role)
+        .map(|member| member.way.nodes.iter().map(|n| (n.x, n.z)).collect())
+        .collect();
+    let mut endpoints: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+    for (index, fragment) in fragments.iter_mut().enumerate() {
+        fragment.dedup();
+        if fragment.len() < 2 {
+            return None;
+        }
+        if fragment.first() != fragment.last() {
+            endpoints.entry(fragment[0]).or_default().push(index);
+            endpoints.entry(*fragment.last()?).or_default().push(index);
+        }
+    }
+    if endpoints.values().any(|incident| incident.len() != 2) {
+        return None;
+    }
+    let mut used = vec![false; fragments.len()];
+    let mut rings = Vec::new();
+    for start in 0..fragments.len() {
+        if used[start] {
+            continue;
+        }
+        used[start] = true;
+        let mut ring = fragments[start].clone();
+        while ring.first() != ring.last() {
+            let endpoint = *ring.last()?;
+            let next = *endpoints
+                .get(&endpoint)?
+                .iter()
+                .find(|&&index| !used[index])?;
+            used[next] = true;
+            let fragment = &fragments[next];
+            if fragment[0] == endpoint {
+                ring.extend(fragment.iter().skip(1).copied());
+            } else {
+                ring.extend(fragment.iter().rev().skip(1).copied());
+            }
+        }
+        if ring.len() < 4 {
+            return None;
+        }
+        rings.push(geo::LineString::from(
+            ring.into_iter()
+                .map(|(x, z)| (f64::from(x), f64::from(z)))
+                .collect::<Vec<_>>(),
+        ));
+    }
+    Some(rings)
+}
+
+fn pier_polygon(relation: &ProcessedRelation) -> Option<geo::MultiPolygon<f64>> {
+    use geo::{Contains, Validation};
+    let outers = pier_rings(relation, ProcessedMemberRole::Outer)?;
+    let inners = pier_rings(relation, ProcessedMemberRole::Inner)?;
+    if outers.is_empty() {
+        return None;
+    }
+    let mut polygons: Vec<_> = outers
+        .into_iter()
+        .map(|ring| geo::Polygon::new(ring, vec![]))
+        .collect();
+    if polygons.iter().any(|polygon| !polygon.is_valid()) {
+        return None;
+    }
+    for inner in inners {
+        let hole = geo::Polygon::new(inner.clone(), vec![]);
+        if !hole.is_valid() {
+            return None;
+        }
+        let owners: Vec<_> = polygons
+            .iter()
+            .enumerate()
+            .filter(|(_, polygon)| {
+                geo::Polygon::new(polygon.exterior().clone(), vec![]).contains(&hole)
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if owners.len() != 1 {
+            return None;
+        }
+        polygons[owners[0]].interiors_push(inner);
+    }
+    let polygon = geo::MultiPolygon::new(polygons);
+    polygon.is_valid().then_some(polygon)
+}
+
+fn generate_pier_relation(editor: &mut WorldEditor, relation: &ProcessedRelation) {
+    use geo::{BoundingRect, Contains};
+    if relation.tags.get("type").map(String::as_str) != Some("multipolygon") {
+        return;
+    }
+    let Some(polygon) = pier_polygon(relation) else {
+        eprintln!(
+            "Skipping pier relation {}: invalid or incomplete multipolygon rings",
+            relation.id
+        );
+        return;
+    };
+    let Some(bounds) = polygon.bounding_rect() else {
+        return;
+    };
+    let (min_x, min_z) = editor.get_min_coords();
+    let (max_x, max_z) = editor.get_max_coords();
+    // Never walk the unbounded OSM footprint or clip fragments before assembly.
+    for x in min_x.max(bounds.min().x as i32)..=max_x.min(bounds.max().x as i32) {
+        for z in min_z.max(bounds.min().y as i32)..=max_z.min(bounds.max().y as i32) {
+            if polygon.contains(&geo::Point::new(f64::from(x) + 0.5, f64::from(z) + 0.5)) {
+                editor.set_block(OAK_SLAB, x, 1, z, None, None);
+                let (master_x, master_z) = editor.master_coordinates(x, z);
+                if master_x.rem_euclid(4) == 0 && master_z.rem_euclid(4) == 0 {
+                    editor.set_block(OAK_LOG, x, 0, z, None, None);
                 }
             }
         }
@@ -538,5 +673,209 @@ pub fn generate_man_made_nodes(editor: &mut WorldEditor, node: &ProcessedNode, a
             "lighthouse" => crate::structures::lighthouse::place(editor, node.x, node.z),
             _ => {} // Unknown man_made type, ignore
         }
+    }
+}
+
+#[cfg(test)]
+mod pier_tests {
+    use super::*;
+    use crate::coordinate_system::{cartesian::XZBBox, geographic::LLBBox};
+    use crate::osm_parser::{ProcessedMember, ProcessedMemberRole, ProcessedRelation};
+    use clap::Parser;
+    use std::{collections::HashMap, sync::Arc};
+
+    fn member(points: &[(i32, i32)], inner: bool) -> ProcessedMember {
+        ProcessedMember {
+            role: if inner {
+                ProcessedMemberRole::Inner
+            } else {
+                ProcessedMemberRole::Outer
+            },
+            way: Arc::new(ProcessedWay {
+                id: 1,
+                tags: HashMap::new(),
+                nodes: points
+                    .iter()
+                    .map(|&(x, z)| ProcessedNode {
+                        id: 0,
+                        tags: HashMap::new(),
+                        x,
+                        z,
+                    })
+                    .collect(),
+            }),
+        }
+    }
+    fn relation() -> ProcessedRelation {
+        ProcessedRelation {
+            id: 42,
+            tags: [
+                ("type".into(), "multipolygon".into()),
+                ("man_made".into(), "pier".into()),
+            ]
+            .into(),
+            members: vec![
+                member(&[(2, 2), (14, 2)], false),
+                member(&[(14, 2), (14, 14)], false),
+                member(&[(14, 14), (2, 14)], false),
+                member(&[(2, 14), (2, 2)], false),
+            ],
+        }
+    }
+    fn render(rel: ProcessedRelation) -> HashMap<(i32, i32, i32), Block> {
+        let bounds = XZBBox::rect_from_min_max(0, 0, 16, 16).unwrap();
+        let ll = LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+        let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+        let args = Args::parse_from(["arnis"]);
+        generate_man_made(&mut editor, &ProcessedElement::Relation(rel), &args);
+        let mut blocks = HashMap::new();
+        for x in 0..=16 {
+            for z in 0..=16 {
+                for y in 0..=1 {
+                    if let Some(block) = editor.get_block_absolute(x, y, z) {
+                        blocks.insert((x, y, z), block);
+                    }
+                }
+            }
+        }
+        blocks
+    }
+    #[test]
+    fn pier_four_fragments_fill_deck_and_coordinate_supports() {
+        let blocks = render(relation());
+        assert_eq!(blocks.get(&(7, 1, 7)), Some(&OAK_SLAB));
+        assert_eq!(blocks.get(&(8, 0, 8)), Some(&OAK_LOG));
+        assert!(!blocks.contains_key(&(7, 0, 7)));
+        assert!(!blocks.contains_key(&(1, 1, 7)));
+    }
+    #[test]
+    fn pier_inner_hole_and_member_reversal() {
+        let mut rel = relation();
+        rel.members
+            .push(member(&[(6, 6), (10, 6), (10, 10), (6, 10), (6, 6)], true));
+        let original = render(rel.clone());
+        assert_eq!(original.get(&(4, 1, 4)), Some(&OAK_SLAB));
+        assert!(!original.contains_key(&(8, 1, 8)));
+        assert!(!original.contains_key(&(8, 0, 8)));
+        rel.members.reverse();
+        for mem in &mut rel.members {
+            Arc::make_mut(&mut mem.way).nodes.reverse();
+        }
+        assert_eq!(render(rel), original);
+    }
+    #[test]
+    fn pier_invalid_geometry_and_negative_tags_produce_no_blocks() {
+        for tag in ["layer", "level"] {
+            let mut rel = relation();
+            rel.tags.insert(tag.into(), "-1".into());
+            assert!(render(rel).is_empty());
+        }
+        let mut rel = relation();
+        rel.members.pop();
+        assert!(render(rel).is_empty());
+        let mut rel = relation();
+        rel.members.push(member(&[(6, 6), (10, 6), (10, 10)], true));
+        assert!(render(rel).is_empty());
+        let mut rel = relation();
+        rel.members = vec![member(&[(2, 2), (14, 14), (2, 14), (14, 2), (2, 2)], false)];
+        assert!(render(rel).is_empty());
+    }
+    #[test]
+    fn pier_large_ring_is_clipped_to_editor_bounds() {
+        let mut rel = relation();
+        rel.members = vec![member(
+            &[
+                (-1_000_000, -1_000_000),
+                (1_000_000, -1_000_000),
+                (1_000_000, 1_000_000),
+                (-1_000_000, 1_000_000),
+                (-1_000_000, -1_000_000),
+            ],
+            false,
+        )];
+        assert_eq!(render(rel).get(&(8, 1, 8)), Some(&OAK_SLAB));
+    }
+    #[test]
+    fn pier_overlapping_master_slices_keep_identical_decks_and_supports() {
+        use crate::elevation::master_grid;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("master");
+        let mut grid = master_grid::tests::fixture();
+        grid.metadata.width = 32;
+        grid.metadata.height = 32;
+        grid.metadata.world_width = 32;
+        grid.metadata.world_height = 32;
+        grid.metadata.payload_bytes = 32 * 32 * 10;
+        grid.elevation = vec![70.0; 32 * 32];
+        grid.land_cover = vec![80; 32 * 32];
+        grid.water_distance = vec![5; 32 * 32];
+        grid.water_blend = vec![1.0; 32 * 32];
+        master_grid::save(&path, &grid).unwrap();
+        let mut outputs = Vec::new();
+        for (col, row) in [(0, 0), (3, 5)] {
+            let bounds = XZBBox::rect_from_min_max(0, 0, 16, 16).unwrap();
+            let ll = LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+            let ground = crate::ground::Ground::from_master_slice(
+                master_grid::load_slice(&path, col, row, 17, 17).unwrap(),
+            )
+            .unwrap();
+            let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+            editor.set_ground(Arc::new(ground));
+            editor.set_external_tile(true);
+            let mut rel = relation();
+            rel.members
+                .push(member(&[(6, 6), (10, 6), (10, 10), (6, 10), (6, 6)], true));
+            for member in &mut rel.members {
+                for node in &mut Arc::make_mut(&mut member.way).nodes {
+                    node.x -= col as i32;
+                    node.z -= row as i32;
+                }
+            }
+            if col != 0 {
+                rel.members.reverse();
+                for member in &mut rel.members {
+                    Arc::make_mut(&mut member.way).nodes.reverse();
+                }
+            }
+            generate_man_made(
+                &mut editor,
+                &ProcessedElement::Relation(rel),
+                &Args::parse_from(["arnis"]),
+            );
+            let mut blocks = HashMap::new();
+            for x in 3..=16 {
+                for z in 5..=16 {
+                    for y in 70..=71 {
+                        if let Some(block) =
+                            editor.get_block_absolute(x - col as i32, y, z - row as i32)
+                        {
+                            blocks.insert((x, y, z), block);
+                        }
+                    }
+                }
+            }
+            assert_eq!(blocks.get(&(4, 70, 12)), Some(&OAK_LOG));
+            assert!(!blocks.contains_key(&(8, 70, 8)));
+            outputs.push(blocks);
+        }
+        assert_eq!(outputs[0], outputs[1]);
+    }
+
+    #[test]
+    fn pier_way_preserves_stock_width_and_segment_supports() {
+        let bounds = XZBBox::rect_from_min_max(0, 0, 16, 16).unwrap();
+        let ll = LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+        let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+        let mut way = (*member(&[(3, 3), (9, 3)], false).way).clone();
+        way.tags.insert("man_made".into(), "pier".into());
+        generate_man_made(
+            &mut editor,
+            &ProcessedElement::Way(way),
+            &Args::parse_from(["arnis"]),
+        );
+        assert_eq!(editor.get_block_absolute(2, 1, 2), Some(OAK_SLAB));
+        assert_eq!(editor.get_block_absolute(2, 0, 3), Some(OAK_LOG));
+        assert_eq!(editor.get_block_absolute(6, 0, 3), Some(OAK_LOG));
+        assert_eq!(editor.get_block_absolute(5, 0, 3), None);
     }
 }

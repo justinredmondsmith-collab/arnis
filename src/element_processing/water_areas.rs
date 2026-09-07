@@ -562,7 +562,7 @@ pub fn prescan_still_surfaces(
     ground: &Ground,
     xzbbox: &XZBBox,
 ) -> StillWaterSurfaces {
-    if !ground.has_land_cover() || !ground.elevation_enabled {
+    if ground.is_external_tile() || !ground.has_land_cover() || !ground.elevation_enabled {
         return StillWaterSurfaces::default();
     }
     let entries: Vec<((&'static str, u64), i32)> = elements
@@ -698,6 +698,12 @@ fn scanline_fill_water(
     tunnel_footprint: &RoadMaskBitmap,
     still_surface: Option<i32>,
 ) {
+    // Use admitted master heights; a slice cannot choose a new body level.
+    let still_surface = if editor.tiler_owns_bathymetry() {
+        None
+    } else {
+        still_surface
+    };
     let edges = PolygonEdges::new(outers, inners);
     // Widened by the interior margin so the interior test reads cached spans too.
     let m = INTERIOR_MARGIN;
@@ -736,10 +742,21 @@ fn scanline_fill_water(
                         }
                     }
                 };
+                // Preserve land already placed at the resolved surface in every route.
+                if editor
+                    .get_block_absolute(x, water_y, z)
+                    .is_some_and(|block| block != WATER)
+                {
+                    continue;
+                }
+                if editor.tiler_owns_bathymetry() {
+                    carve_water_column(editor, x, z, water_y, 0, road_mask, bwf);
+                    continue;
+                }
                 // Over a bore, fill down to the terrain but never carve into it.
                 if tunnel_footprint.contains(x, z) {
                     for y in (ground_y + 1).min(water_y)..=water_y {
-                        editor.set_block_absolute(WATER, x, y, z, None, Some(&[]));
+                        editor.set_block_if_absent_absolute(WATER, x, y, z);
                     }
                     continue;
                 }
@@ -820,5 +837,94 @@ mod tests {
         }
         // The bore itself is untouched below the terrain.
         assert!(!editor.block_exists_absolute(35, -1, 35));
+    }
+    #[test]
+    fn tiler_water_osm_truth_table_and_tunnel_surface_policy() {
+        use crate::block_definitions::STONE;
+        let bounds = XZBBox::rect_from_min_max(0, 0, 15, 15).unwrap();
+        let ll = LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+        let ground = crate::ground::Ground::new_elevation_test(vec![vec![70.0; 16]; 16], 16, 16);
+        for external in [false, true] {
+            for surface in [None, Some(70)] {
+                let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+                editor.set_ground(Arc::new(ground.clone()));
+                editor.set_external_tile(external);
+                let roads = CoordinateBitmap::new_empty();
+                let mut tunnels = CoordinateBitmap::new(&bounds);
+                tunnels.set(8, 6);
+                editor.set_block_absolute(STONE, 6, 70, 6, None, Some(&[]));
+                editor.set_block_absolute(WATER, 7, 70, 6, None, Some(&[]));
+                editor.set_block_absolute(STONE, 8, 70, 6, None, Some(&[]));
+                editor.set_block_absolute(STONE, 8, 65, 6, None, Some(&[]));
+                editor.set_block_absolute(STONE, 5, 72, 6, None, Some(&[]));
+                let outer = ring(1, 2, 13).nodes.into_iter().map(|n| n.xz()).collect();
+                scanline_fill_water(
+                    0,
+                    0,
+                    15,
+                    15,
+                    &[outer],
+                    &[],
+                    &mut editor,
+                    &crate::water_depth::compute_big_water_field(&ground, &bounds),
+                    &roads,
+                    &tunnels,
+                    surface,
+                );
+                assert_eq!(
+                    editor.get_block_absolute(6, 70, 6),
+                    Some(STONE),
+                    "promenade overwritten"
+                );
+                assert_eq!(
+                    editor.get_block_absolute(5, 70, 6),
+                    Some(WATER),
+                    "vacant water beneath deck omitted"
+                );
+                assert_eq!(editor.get_block_absolute(5, 72, 6), Some(STONE));
+                assert_eq!(editor.get_block_absolute(7, 70, 6), Some(WATER));
+                assert_eq!(
+                    editor.get_block_absolute(8, 70, 6),
+                    Some(STONE),
+                    "tunnel surface overwritten"
+                );
+                assert_eq!(editor.get_block_absolute(8, 65, 6), Some(STONE));
+                if external {
+                    assert!(
+                        editor.get_block_absolute(5, 69, 6).is_none(),
+                        "external water generated a bed"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tiler_water_does_not_reestimate_still_surfaces_from_slices() {
+        use crate::elevation::master_grid;
+        let root = tempfile::tempdir().unwrap();
+        let mut grid = master_grid::tests::fixture();
+        grid.metadata.width = 32;
+        grid.metadata.height = 32;
+        grid.metadata.world_width = 32;
+        grid.metadata.world_height = 32;
+        grid.metadata.payload_bytes = 32 * 32 * 10;
+        grid.elevation = vec![70.0; 32 * 32];
+        grid.land_cover = vec![80; 32 * 32];
+        grid.water_distance = vec![5; 32 * 32];
+        grid.water_blend = vec![1.0; 32 * 32];
+        let path = root.path().join("grid");
+        master_grid::save(&path, &grid).unwrap();
+        let ground =
+            Ground::from_master_slice(master_grid::load_slice(&path, 0, 0, 32, 32).unwrap())
+                .unwrap();
+        let mut way = ring(1, 1, 30);
+        way.tags.insert("waterway".into(), "riverbank".into());
+        let bounds = XZBBox::rect_from_min_max(0, 0, 31, 31).unwrap();
+        let surfaces = prescan_still_surfaces(&[ProcessedElement::Way(way)], &ground, &bounds);
+        assert!(
+            surfaces.0.is_empty(),
+            "external slices must use persisted master heights"
+        );
     }
 }
