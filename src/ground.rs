@@ -56,6 +56,7 @@ pub struct Ground {
     /// Processed master terrain must not be normalized or repaired per tile.
     immutable_master: bool,
     master_offset: Option<(i32, i32)>,
+    master_elevation: Option<(std::sync::Arc<[f32]>, usize, usize)>,
     export_context: Option<ExportContext>,
     coastal_protection: Option<crate::coastal::CoastalProtection>,
     /// Minecraft Y at/above which terrain is snow-capped; `i32::MAX` disables it.
@@ -94,6 +95,15 @@ fn snow_threshold_for(ed: &ElevationData, lat_deg: f64, ground_level: i32) -> i3
 }
 
 impl Ground {
+    pub(crate) fn master_geometry(&self) -> Option<crate::clipping::MasterGeometry> {
+        let (_, width, height) = self.master_elevation.as_ref()?;
+        Some(crate::clipping::MasterGeometry {
+            bounds: XZBBox::rect_from_min_max(0, 0, *width as i32 - 1, *height as i32 - 1)
+                .expect("admitted master dimensions"),
+            offset: self.master_offset.expect("admitted master offset"),
+        })
+    }
+
     pub(crate) fn master_offset(&self) -> Option<(i32, i32)> {
         self.master_offset
     }
@@ -122,6 +132,7 @@ impl Ground {
             rotation_mask: None,
             immutable_master: false,
             master_offset: None,
+            master_elevation: None,
             export_context: None,
             coastal_protection: None,
             snow_threshold_y: i32::MAX,
@@ -158,6 +169,7 @@ impl Ground {
             rotation_mask: None,
             immutable_master: false,
             master_offset: None,
+            master_elevation: None,
             export_context: None,
             coastal_protection: None,
             snow_threshold_y: i32::MAX,
@@ -182,6 +194,7 @@ impl Ground {
             rotation_mask: None,
             immutable_master: false,
             master_offset: None,
+            master_elevation: None,
             export_context: None,
             coastal_protection: None,
             snow_threshold_y: i32::MAX,
@@ -229,6 +242,7 @@ impl Ground {
             rotation_mask: None,
             immutable_master: false,
             master_offset: None,
+            master_elevation: None,
             export_context: None,
             coastal_protection: None,
             snow_threshold_y: i32::MAX,
@@ -375,6 +389,7 @@ impl Ground {
                         rotation_mask: None,
                         immutable_master: false,
                         master_offset: None,
+                        master_elevation: None,
                         coastal_protection,
                         export_context: Some(ExportContext {
                             water_floor,
@@ -414,6 +429,7 @@ impl Ground {
                         rotation_mask: None,
                         immutable_master: false,
                         master_offset: None,
+                        master_elevation: None,
                         export_context: None,
                         coastal_protection: None,
                         snow_threshold_y: i32::MAX,
@@ -748,12 +764,11 @@ impl Ground {
         }
 
         let data: &ElevationData = self.elevation_data.as_ref().unwrap();
-        if self.immutable_master {
-            // Admitted tiles have exactly one saved sample per block. Normalizing
-            // through floating-point ratios can move half-height ties across Y.
-            let x = (coord.x.max(0) as usize).min(data.width - 1);
-            let z = (coord.z.max(0) as usize).min(data.height - 1);
-            return (data.heights[z][x] as f64).round() as i32;
+        if let Some((heights, width, height)) = &self.master_elevation {
+            let (col, row) = self.master_offset.expect("admitted master offset");
+            let x = (i64::from(coord.x) + i64::from(col)).clamp(0, *width as i64 - 1) as usize;
+            let z = (i64::from(coord.z) + i64::from(row)).clamp(0, *height as i64 - 1) as usize;
+            return f64::from(heights[z * width + x]).round() as i32;
         }
         let (x_ratio, z_ratio) = self.get_data_coordinates(coord, data);
         self.interpolate_height(x_ratio, z_ratio, data)
@@ -1210,6 +1225,7 @@ mod tests {
             rotation_mask: None,
             immutable_master: false,
             master_offset: None,
+            master_elevation: None,
             export_context: None,
             coastal_protection: None,
             snow_threshold_y: i32::MAX,
@@ -1567,6 +1583,38 @@ mod tiler_master_tests {
 
     use crate::elevation::master_grid::{load_slice, save, tests::fixture};
 
+    #[test]
+    fn raw_terrain_reads_full_admitted_master_outside_slice() {
+        use crate::world_editor::WorldEditor;
+        use std::sync::Arc;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("master");
+        let grid = fixture();
+        save(&path, &grid).unwrap();
+        let bounds = XZBBox::rect_from_min_max(0, 0, 1, 1).unwrap();
+        let bbox = LLBBox::from_str("40,-74,41,-73").unwrap();
+        let mut whole = WorldEditor::new("/dev/null/unused".into(), &bounds, bbox);
+        whole.set_ground(Arc::new(
+            Ground::from_master_slice(load_slice(&path, 0, 0, 4, 3).unwrap()).unwrap(),
+        ));
+        let mut tile = WorldEditor::new("/dev/null/unused".into(), &bounds, bbox);
+        tile.set_ground(Arc::new(
+            Ground::from_master_slice(load_slice(&path, 1, 1, 2, 2).unwrap()).unwrap(),
+        ));
+        // Includes negative tile coords, far endpoints and master-edge clamping.
+        for x in -2..=5 {
+            for z in -2..=4 {
+                assert_eq!(
+                    tile.terrain_level(x - 1, z - 1),
+                    whole.terrain_level(x, z),
+                    "master ({x},{z})"
+                );
+            }
+        }
+        // Local rendering extent and writes remain bounded by the supplied window.
+        assert_eq!(tile.get_max_coords(), (1, 1));
+    }
+
     fn differently_sized_slices() -> Vec<Ground> {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("master");
@@ -1821,6 +1869,13 @@ impl Ground {
         {
             return Err(std::io::Error::other("invalid admitted tile band lengths"));
         }
+        if tile.master_elevation.len()
+            != tile.metadata.width as usize * tile.metadata.height as usize
+        {
+            return Err(std::io::Error::other(
+                "invalid admitted master elevation length",
+            ));
+        }
         let climate = match tile.metadata.climate.as_str() {
             "Temperate" => Climate::Temperate,
             "TropicalSavanna" => Climate::TropicalSavanna,
@@ -1879,6 +1934,11 @@ impl Ground {
             rotation_mask: None,
             immutable_master: true,
             master_offset: Some((tile.col as i32, tile.row as i32)),
+            master_elevation: Some((
+                tile.master_elevation,
+                meta.width as usize,
+                meta.height as usize,
+            )),
             export_context: None,
             coastal_protection: None,
             snow_threshold_y: meta.snow_threshold_y,

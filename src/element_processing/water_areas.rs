@@ -55,7 +55,8 @@ pub fn generate_water_areas_from_relation(
     tunnel_footprint: &RoadMaskBitmap,
     surfaces: &StillWaterSurfaces,
 ) {
-    let Some((outers, inners)) = relation_rings(element, xzbbox) else {
+    let Some((outers, inners)) = relation_rings(element, xzbbox, editor.master_geometry().as_ref())
+    else {
         return;
     };
     let surface = surfaces.get("relation", element.id);
@@ -75,6 +76,7 @@ pub fn generate_water_areas_from_relation(
 fn relation_rings(
     element: &ProcessedRelation,
     xzbbox: &XZBBox,
+    master: Option<&crate::clipping::MasterGeometry>,
 ) -> Option<(Vec<Vec<ProcessedNode>>, Vec<Vec<ProcessedNode>>)> {
     // Check if this is a water relation (either with water tag or natural=water)
     let is_water = element.tags.contains_key("water")
@@ -112,12 +114,18 @@ fn relation_rings(
     // Clip assembled rings to bbox (must happen after merging to preserve ring connectivity)
     outers = outers
         .into_iter()
-        .filter_map(|ring| clip_water_ring_to_bbox(&ring, xzbbox))
+        .filter_map(|ring| match master {
+            Some(master) => master.clip_water(&ring),
+            None => clip_water_ring_to_bbox(&ring, xzbbox),
+        })
         .collect();
     super::merge_way_segments(&mut inners);
     inners = inners
         .into_iter()
-        .filter_map(|ring| clip_water_ring_to_bbox(&ring, xzbbox))
+        .filter_map(|ring| match master {
+            Some(master) => master.clip_water(&ring),
+            None => clip_water_ring_to_bbox(&ring, xzbbox),
+        })
         .collect();
 
     if !verify_closed_rings(&outers) {
@@ -573,7 +581,7 @@ pub fn prescan_still_surfaces(
                     (("way", way.id), way_rings(way)?, Vec::new())
                 }
                 ProcessedElement::Relation(rel) => {
-                    let (outers, inners) = relation_rings(rel, xzbbox)?;
+                    let (outers, inners) = relation_rings(rel, xzbbox, None)?;
                     (("relation", rel.id), outers, inners)
                 }
                 _ => return None,
@@ -704,10 +712,45 @@ fn scanline_fill_water(
     } else {
         still_surface
     };
-    let edges = PolygonEdges::new(outers, inners);
+    let frame = editor.master_geometry();
+    let offset = frame.as_ref().map(|frame| frame.offset).unwrap_or((0, 0));
+    // Evaluate floating water crossings in the same master coordinates in every
+    // slice, preserving the established inclusive water-edge convention.
+    let translate = |rings: &[Vec<XZPoint>]| -> Vec<Vec<XZPoint>> {
+        rings
+            .iter()
+            .map(|ring| {
+                ring.iter()
+                    .map(|p| XZPoint::new(p.x + offset.0, p.z + offset.1))
+                    .collect()
+            })
+            .collect()
+    };
+    let master_outers;
+    let master_inners;
+    let edges = if frame.is_some() {
+        master_outers = translate(outers);
+        master_inners = translate(inners);
+        PolygonEdges::new(&master_outers, &master_inners)
+    } else {
+        PolygonEdges::new(outers, inners)
+    };
     // Widened by the interior margin so the interior test reads cached spans too.
     let m = INTERIOR_MARGIN;
-    let spans = SpanRows::build(&edges, min_z - m, max_z + m, min_x - m, max_x + m);
+    let mut spans = SpanRows::build(
+        &edges,
+        min_z - m + offset.1,
+        max_z + m + offset.1,
+        min_x - m + offset.0,
+        max_x + m + offset.0,
+    );
+    spans.z0 -= offset.1;
+    for row in &mut spans.rows {
+        for (start, end) in row {
+            *start -= offset.0;
+            *end -= offset.0;
+        }
+    }
 
     for z in min_z..=max_z {
         for &(span_start, span_end) in spans.get(z) {
@@ -777,6 +820,60 @@ mod tests {
     use std::collections::HashMap as StdMap;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn external_water_relation_clips_assembled_rings_in_master_space() {
+        use crate::osm_parser::ProcessedMember;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        let mut geometries = Vec::new();
+        for col in [0, 48] {
+            let way = |id, points: &[(i32, i32)]| ProcessedWay {
+                id,
+                tags: HashMap::new(),
+                nodes: points
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &(x, z))| ProcessedNode {
+                        id: i as u64,
+                        tags: HashMap::new(),
+                        x: x - col,
+                        z,
+                    })
+                    .collect(),
+            };
+            let outer = way(1, &[(-20, 0), (220, 73), (220, 100), (-20, 100), (-20, 0)]);
+            let inner = way(2, &[(60, 50), (90, 55), (90, 70), (60, 70), (60, 50)]);
+            let relation = ProcessedRelation {
+                id: 3,
+                tags: HashMap::from([("natural".into(), "water".into())]),
+                members: vec![
+                    ProcessedMember {
+                        role: ProcessedMemberRole::Outer,
+                        way: Arc::new(outer),
+                    },
+                    ProcessedMember {
+                        role: ProcessedMemberRole::Inner,
+                        way: Arc::new(inner),
+                    },
+                ],
+            };
+            let window = XZBBox::rect_from_min_max(0, 0, 95, 79).unwrap();
+            let master = crate::clipping::MasterGeometry {
+                bounds: XZBBox::rect_from_min_max(0, 0, 200, 200).unwrap(),
+                offset: (col, 0),
+            };
+            let (outer, inner) = relation_rings(&relation, &window, Some(&master)).unwrap();
+            geometries.push([outer, inner].map(|rings| {
+                rings
+                    .iter()
+                    .map(|ring| ring.iter().map(|n| (n.x + col, n.z)).collect::<Vec<_>>())
+                    .collect::<Vec<_>>()
+            }));
+        }
+        assert_eq!(geometries[0], geometries[1]);
+        assert!(geometries[0][0][0].iter().any(|&(x, _)| x == 200));
+    }
 
     #[test]
     fn coastal_osm_polygon_cannot_repaint_rejected_master_land() {

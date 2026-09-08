@@ -185,6 +185,111 @@ fn scanline_fill_area(
     filled
 }
 
+/// Exact strict-interior rasterization in a bounded window of an unchanged master ring.
+/// Integer rational intersections avoid translation-dependent rounding. Boundary intervals
+/// are removed explicitly, including horizontal edges and vertices touching a scanline.
+/// Admission uses the full ring's rows/edges, so slices cannot evade a whole-ring refusal.
+pub(crate) fn flood_fill_area_in_window(
+    coords: &[(i32, i32)],
+    window: &crate::coordinate_system::cartesian::XZBBox,
+    timeout: Option<&Duration>,
+) -> Vec<(i32, i32)> {
+    if coords.len() < 4 || coords.first() != coords.last() {
+        return Vec::new();
+    }
+    let min_z = coords.iter().map(|p| p.1).min().unwrap();
+    let max_z = coords.iter().map(|p| p.1).max().unwrap();
+    let min_x = coords.iter().map(|p| p.0).min().unwrap();
+    let max_x = coords.iter().map(|p| p.0).max().unwrap();
+    let rows = i64::from(max_z) - i64::from(min_z) + 1;
+    let area = rows.saturating_mul(i64::from(max_x) - i64::from(min_x) + 1);
+    if rows.saturating_mul(coords.len() as i64 - 1) > MAX_SCANLINE_EDGE_TESTS
+        || area > MAX_FLOOD_FILL_AREA
+    {
+        return Vec::new();
+    }
+    let started = Instant::now();
+    let mut result = Vec::new();
+    let mut crossings: Vec<(i128, i128)> = Vec::new();
+    let mut boundaries: Vec<(i32, i32)> = Vec::new();
+    for z in min_z.max(window.min_z())..=max_z.min(window.max_z()) {
+        if timeout.is_some_and(|limit| started.elapsed() > *limit) {
+            return Vec::new();
+        }
+        crossings.clear();
+        boundaries.clear();
+        for edge in coords.windows(2) {
+            let ((x0, z0), (x1, z1)) = (edge[0], edge[1]);
+            if z0 == z1 {
+                if z == z0 {
+                    boundaries.push((x0.min(x1), x0.max(x1)));
+                }
+                continue;
+            }
+            if z < z0.min(z1) || z > z0.max(z1) {
+                continue;
+            }
+            let mut denominator = i128::from(z1) - i128::from(z0);
+            let mut numerator = i128::from(x0) * denominator
+                + (i128::from(z) - i128::from(z0)) * (i128::from(x1) - i128::from(x0));
+            if denominator < 0 {
+                denominator = -denominator;
+                numerator = -numerator;
+            }
+            if numerator % denominator == 0 {
+                let x = (numerator / denominator) as i32;
+                boundaries.push((x, x));
+            }
+            if (z0 <= z) != (z1 <= z) {
+                crossings.push((numerator, denominator));
+            }
+        }
+        crossings.sort_unstable_by(|a, b| (a.0 * b.1).cmp(&(b.0 * a.1)));
+        boundaries.sort_unstable();
+        // Merge overlapping boundary intervals before subtracting them. A shared
+        // cursor makes this linear in edges per row, even with many crossings.
+        let mut merged: Vec<(i32, i32)> = Vec::new();
+        for &(left, right) in &boundaries {
+            if let Some(last) = merged.last_mut() {
+                if left <= last.1.saturating_add(1) {
+                    last.1 = last.1.max(right);
+                    continue;
+                }
+            }
+            merged.push((left, right));
+        }
+        let mut boundary_index = 0;
+        for pair in crossings.chunks_exact(2) {
+            let start = (pair[0].0.div_euclid(pair[0].1) + 1).max(i128::from(window.min_x()));
+            let end = (-(-pair[1].0).div_euclid(pair[1].1) - 1).min(i128::from(window.max_x()));
+            let mut x = start;
+            while let Some(&(left, right)) = merged.get(boundary_index) {
+                if i128::from(right) < x {
+                    boundary_index += 1;
+                    continue;
+                }
+                if i128::from(left) > end {
+                    break;
+                }
+                while x < i128::from(left) && x <= end {
+                    result.push((x as i32, z));
+                    x += 1;
+                }
+                x = x.max(i128::from(right) + 1);
+                if i128::from(right) >= end {
+                    break;
+                }
+                boundary_index += 1;
+            }
+            while x <= end {
+                result.push((x as i32, z));
+                x += 1;
+            }
+        }
+    }
+    result
+}
+
 /// Optimized flood fill for larger polygons with multi-seed detection for complex shapes like U-shapes
 fn optimized_flood_fill_area(
     polygon_coords: &[(i32, i32)],
@@ -357,6 +462,70 @@ fn original_flood_fill_area(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn external_window_fill_matches_strict_contains_and_translation() {
+        use crate::coordinate_system::cartesian::XZBBox;
+        use std::collections::HashSet;
+        let rings = [
+            vec![(0, 0), (20, 7), (20, 15), (0, 15), (0, 0)],
+            vec![
+                (0, 0),
+                (12, 0),
+                (12, 12),
+                (8, 12),
+                (8, 3),
+                (4, 3),
+                (4, 12),
+                (0, 12),
+                (0, 0),
+            ],
+            vec![(0, 0), (12, 0), (12, 12), (6, 6), (0, 12), (0, 0)],
+            vec![(0, 0), (10, 1), (20, 0), (20, 3), (10, 2), (0, 3), (0, 0)],
+            vec![(0, 0), (4, 4), (8, 8), (0, 0)],
+        ];
+        for ring in rings {
+            let polygon = Polygon::new(
+                LineString::from(
+                    ring.iter()
+                        .map(|&(x, z)| (f64::from(x), f64::from(z)))
+                        .collect::<Vec<_>>(),
+                ),
+                vec![],
+            );
+            for (dx, dz) in [(0, 0), (7, 5), (-11, -17)] {
+                let translated: Vec<_> = ring.iter().map(|&(x, z)| (x - dx, z - dz)).collect();
+                let window = XZBBox::rect_from_min_max(2 - dx, 1 - dz, 17 - dx, 11 - dz).unwrap();
+                let actual: HashSet<_> = flood_fill_area_in_window(&translated, &window, None)
+                    .into_iter()
+                    .map(|(x, z)| (x + dx, z + dz))
+                    .collect();
+                let mut expected = HashSet::new();
+                for x in 2..=17 {
+                    for z in 1..=11 {
+                        if polygon.contains(&Point::new(f64::from(x), f64::from(z))) {
+                            expected.insert((x, z));
+                        }
+                    }
+                }
+                assert_eq!(actual, expected, "ring {ring:?}, offset ({dx},{dz})");
+            }
+        }
+    }
+
+    #[test]
+    fn external_fill_refusal_depends_on_shared_ring_not_window() {
+        use crate::coordinate_system::cartesian::XZBBox;
+        let tiny = XZBBox::rect_from_min_max(1, 1, 2, 2).unwrap();
+        let huge = [(0, 0), (6000, 0), (6000, 6000), (0, 6000), (0, 0)];
+        assert!(flood_fill_area_in_window(&huge, &tiny, None).is_empty());
+        assert!(flood_fill_area_in_window(&[(0, 0), (20, 0), (20, 20)], &tiny, None).is_empty());
+        let large = [(0, 0), (4000, 0), (4000, 4000), (0, 4000), (0, 0)];
+        assert_eq!(
+            flood_fill_area_in_window(&large, &tiny, None),
+            vec![(1, 1), (2, 1), (1, 2), (2, 2)]
+        );
+    }
 
     #[test]
     fn small_polygon_still_uses_the_bitmap_path() {

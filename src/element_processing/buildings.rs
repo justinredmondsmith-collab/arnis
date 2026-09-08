@@ -2,7 +2,6 @@ use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::climate::Climate;
-use crate::clipping::clip_way_to_bbox;
 use crate::colors::color_text_to_rgb_tuple;
 use crate::deterministic_rng::{coord_rng, element_rng};
 use crate::element_processing::building_facade::{
@@ -10595,7 +10594,7 @@ pub fn generate_building_from_relation(
         // oversized flood fills and unnecessary block placement.
         outer_rings = outer_rings
             .into_iter()
-            .map(|ring| clip_way_to_bbox(&ring, xzbbox))
+            .map(|ring| ctx.flood_fill_cache.clip_ring(&ring, xzbbox))
             .filter(|ring| ring.len() >= 4)
             .collect();
 
@@ -10637,7 +10636,7 @@ pub fn generate_building_from_relation(
 
         inner_rings = inner_rings
             .into_iter()
-            .map(|ring| clip_way_to_bbox(&ring, xzbbox))
+            .map(|ring| ctx.flood_fill_cache.clip_ring(&ring, xzbbox))
             .filter(|ring| ring.len() >= 4)
             .collect();
 

@@ -305,6 +305,7 @@ pub struct FloodFillCache {
     /// Cached results: element_id -> filled coordinates (shared via Arc so handler
     /// fetches are O(1) refcount bumps instead of deep clones).
     way_cache: FnvHashMap<u64, FloodFillResult>,
+    master_geometry: Option<(crate::clipping::MasterGeometry, XZBBox)>,
 }
 
 impl FloodFillCache {
@@ -312,6 +313,42 @@ impl FloodFillCache {
     pub fn new() -> Self {
         Self {
             way_cache: FnvHashMap::default(),
+            master_geometry: None,
+        }
+    }
+
+    /// External fills preserve shared rings, cropping integer cells rather than vertices.
+    pub(crate) fn precompute_master(
+        elements: &[ProcessedElement],
+        timeout: Option<&Duration>,
+        master: crate::clipping::MasterGeometry,
+        window: XZBBox,
+    ) -> Self {
+        Self::precompute_with_context(elements, timeout, Some((master, window)))
+    }
+
+    pub(crate) fn clip_ring(
+        &self,
+        nodes: &[crate::osm_parser::ProcessedNode],
+        fallback: &XZBBox,
+    ) -> Vec<crate::osm_parser::ProcessedNode> {
+        match &self.master_geometry {
+            Some((master, _)) => master.clip_way(nodes),
+            None => crate::clipping::clip_way_to_bbox(nodes, fallback),
+        }
+    }
+
+    fn fill(&self, way: &ProcessedWay, timeout: Option<&Duration>) -> Vec<(i32, i32)> {
+        match &self.master_geometry {
+            Some((master, window)) => {
+                let nodes = master.clip_way(&way.nodes);
+                let coords: Vec<_> = nodes.iter().map(|n| (n.x, n.z)).collect();
+                crate::floodfill::flood_fill_area_in_window(&coords, window, timeout)
+            }
+            None => flood_fill_area(
+                &way.nodes.iter().map(|n| (n.x, n.z)).collect::<Vec<_>>(),
+                timeout,
+            ),
         }
     }
 
@@ -319,6 +356,18 @@ impl FloodFillCache {
     ///
     /// This runs in parallel using Rayon, taking advantage of multiple CPU cores.
     pub fn precompute(elements: &[ProcessedElement], timeout: Option<&Duration>) -> Self {
+        Self::precompute_with_context(elements, timeout, None)
+    }
+
+    fn precompute_with_context(
+        elements: &[ProcessedElement],
+        timeout: Option<&Duration>,
+        master_geometry: Option<(crate::clipping::MasterGeometry, XZBBox)>,
+    ) -> Self {
+        let mut cache = Self {
+            way_cache: FnvHashMap::default(),
+            master_geometry,
+        };
         // Collect all ways that need flood fill
         let ways_needing_fill: Vec<&ProcessedWay> = elements
             .iter()
@@ -338,9 +387,7 @@ impl FloodFillCache {
         let way_results: Vec<(u64, Vec<(i32, i32)>)> = ways_needing_fill
             .par_iter()
             .map(|way| {
-                let polygon_coords: Vec<(i32, i32)> =
-                    way.nodes.iter().map(|n| (n.x, n.z)).collect();
-                let filled = flood_fill_area(&polygon_coords, timeout);
+                let filled = cache.fill(way, timeout);
                 (way.id, filled)
             })
             .collect();
@@ -348,7 +395,6 @@ impl FloodFillCache {
         // Build the cache. Empty flood-fill results (degenerate rings or
         // flood-fill timeouts) reuse the process-wide empty sentinel so a
         // noisy input doesn't spawn many distinct empty allocations.
-        let mut cache = Self::new();
         for (id, filled) in way_results {
             let entry = if filled.is_empty() {
                 Arc::clone(empty_flood_fill_result())
@@ -386,8 +432,7 @@ impl FloodFillCache {
             // These are rare (only relations with tag-inherited members), so the
             // extra Arc allocation here is fine. Empty results still go through
             // the shared sentinel to stay consistent with the cached path.
-            let polygon_coords: Vec<(i32, i32)> = way.nodes.iter().map(|n| (n.x, n.z)).collect();
-            let filled = flood_fill_area(&polygon_coords, timeout);
+            let filled = self.fill(way, timeout);
             if filled.is_empty() {
                 Arc::clone(empty_flood_fill_result())
             } else {
@@ -468,10 +513,10 @@ impl FloodFillCache {
                 if !is_building {
                     continue;
                 }
-                for_relation_ring_cells(rel, ProcessedMemberRole::Outer, xzbbox, |x, z| {
+                for_relation_ring_cells(self, rel, ProcessedMemberRole::Outer, xzbbox, |x, z| {
                     footprints.set(x, z)
                 });
-                for_relation_ring_cells(rel, ProcessedMemberRole::Inner, xzbbox, |x, z| {
+                for_relation_ring_cells(self, rel, ProcessedMemberRole::Inner, xzbbox, |x, z| {
                     footprints.clear(x, z)
                 });
             }
@@ -510,6 +555,7 @@ impl Default for FloodFillCache {
 
 /// Applies a callback to the flood-filled cells of a relation's merged, clipped, closed rings.
 fn for_relation_ring_cells(
+    cache: &FloodFillCache,
     rel: &crate::osm_parser::ProcessedRelation,
     role: ProcessedMemberRole,
     xzbbox: &XZBBox,
@@ -524,7 +570,7 @@ fn for_relation_ring_cells(
     crate::element_processing::merge_way_segments(&mut rings);
 
     for ring in rings {
-        let ring = crate::clipping::clip_way_to_bbox(&ring, xzbbox);
+        let ring = cache.clip_ring(&ring, xzbbox);
         if ring.len() < 4 {
             continue;
         }
@@ -538,7 +584,11 @@ fn for_relation_ring_cells(
                 continue;
             }
         }
-        for (x, z) in flood_fill_area(&coords, None) {
+        let cells = match &cache.master_geometry {
+            Some((_, window)) => crate::floodfill::flood_fill_area_in_window(&coords, window, None),
+            None => flood_fill_area(&coords, None),
+        };
+        for (x, z) in cells {
             apply(x, z);
         }
     }
@@ -602,6 +652,79 @@ mod tests {
                 .collect(),
             tags: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn external_relation_masks_preserve_slanted_coverage_holes_and_way_priority() {
+        use crate::osm_parser::{ProcessedMember, ProcessedRelation};
+        let master = XZBBox::rect_from_min_max(0, 0, 200, 200).unwrap();
+        let mut results = Vec::new();
+        for (col, width) in [(0, 201), (48, 96)] {
+            let window = XZBBox::rect_from_min_max(0, 0, width - 1, 79).unwrap();
+            let translate = |points: &[(i32, i32)]| {
+                let mut w = way(points);
+                for n in &mut w.nodes {
+                    n.x -= col;
+                }
+                w
+            };
+            let mut outer = translate(&[(0, 0), (200, 73), (200, 100), (0, 100), (0, 0)]);
+            outer.id = 10;
+            let mut inner = translate(&[(80, 40), (100, 40), (100, 60), (80, 60), (80, 40)]);
+            inner.id = 20;
+            let relation = ProcessedRelation {
+                id: 30,
+                tags: HashMap::from([("building".into(), "yes".into())]),
+                members: vec![
+                    ProcessedMember {
+                        role: ProcessedMemberRole::Outer,
+                        way: Arc::new(outer),
+                    },
+                    ProcessedMember {
+                        role: ProcessedMemberRole::Inner,
+                        way: Arc::new(inner),
+                    },
+                ],
+            };
+            let mut inset = translate(&[(85, 45), (95, 45), (95, 55), (85, 55), (85, 45)]);
+            inset.id = 40;
+            inset.tags.insert("building".into(), "yes".into());
+            let elements = vec![
+                ProcessedElement::Relation(relation),
+                ProcessedElement::Way(inset),
+            ];
+            let cache = FloodFillCache::precompute_master(
+                &elements,
+                None,
+                crate::clipping::MasterGeometry {
+                    bounds: master.clone(),
+                    offset: (col, 0),
+                },
+                window.clone(),
+            );
+            let mask = cache.collect_building_footprints(&elements, &window);
+            assert!(mask.contains(71 - col, 26));
+            assert!(!mask.contains(82 - col, 42));
+            assert!(mask.contains(90 - col, 50));
+            let mut cells = std::collections::HashSet::new();
+            for x in 48..144 {
+                for z in 0..80 {
+                    if mask.contains(x - col, z) {
+                        cells.insert((x, z));
+                    }
+                }
+            }
+            results.push(cells);
+            // Synthetic relation fallback follows the same bounded policy.
+            let uncached = translate(&[(0, 0), (200, 73), (200, 100), (0, 100), (0, 0)]);
+            let fill = cache.get_or_compute(&uncached, None);
+            assert!(fill.contains(&(71 - col, 26)));
+            assert!(fill
+                .iter()
+                .all(|&(x, z)| window
+                    .contains(&crate::coordinate_system::cartesian::XZPoint::new(x, z))));
+        }
+        assert_eq!(results[0], results[1]);
     }
 
     #[test]

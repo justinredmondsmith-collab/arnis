@@ -60,6 +60,9 @@ pub(crate) struct TileGrid {
     pub row: u32,
     pub width: u32,
     pub height: u32,
+    /// Full immutable elevation context from the same admitted payload buffers.
+    /// Metadata admission bounds this band to MAX_CELLS (64 MiB).
+    pub master_elevation: std::sync::Arc<[f32]>,
     pub elevation: Vec<f32>,
     pub land_cover: Vec<u8>,
     pub water_distance: Vec<u8>,
@@ -422,7 +425,8 @@ fn load_slice_reader(
     let cells = u64::from(metadata.width) * u64::from(metadata.height);
     let mut buffer = [0u8; 65536];
     let mut bands = Vec::with_capacity(4);
-    // Retain only requested samples, from the very buffers admitted by validation and
+    let mut master_elevation = Vec::with_capacity(cells as usize);
+    // Retain requested bands and the full elevation context from buffers admitted by validation and
     // hashing. A second read, even through the same handle, could observe an in-place
     // mutation after admission. No payload bytes are reread here.
     for (band, stride) in [4u64, 1, 1, 4].into_iter().enumerate() {
@@ -441,6 +445,13 @@ fn load_slice_reader(
             file.read_exact(&mut buffer[..n])?;
             validate_band(band, &buffer[..n]).map_err(io::Error::other)?;
             hash.update(&buffer[..n]);
+            if band == 0 {
+                master_elevation.extend(
+                    buffer[..n]
+                        .chunks_exact(4)
+                        .map(|c| f32::from_le_bytes(c.try_into().unwrap())),
+                );
+            }
             let chunk_end = consumed + n as u64;
             let first_row = (consumed / master_row_bytes).max(u64::from(row));
             let end_row = chunk_end
@@ -483,6 +494,7 @@ fn load_slice_reader(
         row,
         width,
         height,
+        master_elevation: master_elevation.into(),
         elevation: floats(bands.next().unwrap()),
         land_cover: bands.next().unwrap(),
         water_distance: bands.next().unwrap(),
@@ -825,6 +837,11 @@ pub(crate) mod tests {
         };
         let tile = load_slice_reader(reader, len, 0, 0, 2, 2).unwrap();
         assert_eq!(tile.elevation, vec![0.25, 1.25, 4.25, 5.25]);
+        assert_eq!(&*tile.master_elevation, &g.elevation);
+        assert!(std::sync::Arc::ptr_eq(
+            &tile.master_elevation,
+            &tile.clone().master_elevation
+        ));
     }
 
     #[test]
