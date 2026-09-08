@@ -18,6 +18,20 @@ def encoded(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
 
+def inland_declaration(bbox):
+    """Explicit classification for synthetic inland fixtures only."""
+    return encoded(
+        dict(
+            schema_version=1,
+            policy="master-coastal-water-v1",
+            bbox=bbox,
+            default_classification="inland",
+            sources=[dict(kind="osm", key="master-osm")],
+            coastal_domains=[],
+        )
+    )
+
+
 def run(binary, root, args, controls=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith("ARNIS_")}
     env.update(controls or {})
@@ -113,6 +127,8 @@ def smoke(candidate, stock=None):
         (root / "osm.json").write_bytes(osm)
         climate = (ROOT / "assets/climate/koppen_0p1.bin").read_bytes()
         (root / "koppen_0p1.bin").write_bytes(climate)
+        classification = inland_declaration([40.0, -74.0, 40.0001, -73.9999])
+        (root / "water-classification.json").write_bytes(classification)
         profile_hash = hashlib.sha256(
             encoded(json.loads((ROOT / "docs/contracts/tiler-profile.json").read_text()))
         ).hexdigest()
@@ -134,6 +150,13 @@ def smoke(candidate, stock=None):
                         "path": "koppen_0p1.bin",
                         "sha256": hashlib.sha256(climate).hexdigest(),
                         "size_bytes": len(climate),
+                    },
+                    {
+                        "kind": "water_classification",
+                        "key": "master-water-classification",
+                        "path": "water-classification.json",
+                        "sha256": hashlib.sha256(classification).hexdigest(),
+                        "size_bytes": len(classification),
                     },
                 ],
             }

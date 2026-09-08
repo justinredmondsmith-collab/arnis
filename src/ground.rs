@@ -57,6 +57,7 @@ pub struct Ground {
     immutable_master: bool,
     master_offset: Option<(i32, i32)>,
     export_context: Option<ExportContext>,
+    coastal_protection: Option<crate::coastal::CoastalProtection>,
     /// Minecraft Y at/above which terrain is snow-capped; `i32::MAX` disables it.
     snow_threshold_y: i32,
     /// Climate at the bbox center, driving arid/polar surface palettes and biomes.
@@ -122,6 +123,7 @@ impl Ground {
             immutable_master: false,
             master_offset: None,
             export_context: None,
+            coastal_protection: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
         }
@@ -157,6 +159,7 @@ impl Ground {
             immutable_master: false,
             master_offset: None,
             export_context: None,
+            coastal_protection: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::classify(bbox),
         }
@@ -180,6 +183,7 @@ impl Ground {
             immutable_master: false,
             master_offset: None,
             export_context: None,
+            coastal_protection: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
         }
@@ -226,6 +230,7 @@ impl Ground {
             immutable_master: false,
             master_offset: None,
             export_context: None,
+            coastal_protection: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
         }
@@ -323,6 +328,7 @@ impl Ground {
             } else {
                 crate::elevation::SourceMode::Auto
             };
+            let mut coastal_protection = None;
             let elevation = if sources.is_some() {
                 crate::elevation::fetch_elevation_data_with_sources(
                     bbox,
@@ -335,6 +341,7 @@ impl Ground {
                     source_mode,
                     benchmark,
                     sources,
+                    Some(&mut coastal_protection),
                 )
             } else {
                 crate::elevation_data::fetch_elevation_data(
@@ -368,6 +375,7 @@ impl Ground {
                         rotation_mask: None,
                         immutable_master: false,
                         master_offset: None,
+                        coastal_protection,
                         export_context: Some(ExportContext {
                             water_floor,
                             sink_floor,
@@ -407,6 +415,7 @@ impl Ground {
                         immutable_master: false,
                         master_offset: None,
                         export_context: None,
+                        coastal_protection: None,
                         snow_threshold_y: i32::MAX,
                         climate: crate::climate::Climate::classify(bbox),
                     })
@@ -1202,6 +1211,7 @@ mod tests {
             immutable_master: false,
             master_offset: None,
             export_context: None,
+            coastal_protection: None,
             snow_threshold_y: i32::MAX,
             climate: crate::climate::Climate::Temperate,
         }
@@ -1233,6 +1243,89 @@ mod tests {
         let mut args = Args::parse_from(["arnis"]);
         args.aws_only_elevation = true;
         (ground, args, LLBBox::new(40.0, -74.0, 41.0, -73.0).unwrap())
+    }
+
+    #[test]
+    fn coastal_finalization_is_required_and_nonzero_overlaps_preserve_all_bands() {
+        let rectangle = |east| serde_json::json!({"type":"MultiPolygon","coordinates":[[[[0.,0.],[east,0.],[east,3.],[0.,3.],[0.,0.]]]]});
+        let bytes = serde_json::to_vec(&serde_json::json!({"schema_version":1,"policy":"master-coastal-water-v1","bbox":[0.,0.,3.,3.],"default_classification":"inland","sources":[{"kind":"osm","key":"master-osm"}],"coastal_domains":[{"id":"harbor","domain":rectangle(3.),"water":rectangle(1.),"inland_exclusions":{"type":"MultiPolygon","coordinates":[]}}]})).unwrap();
+        let policy = crate::coastal::CoastalPolicy::parse(
+            &bytes,
+            &[0., 0., 3., 3.],
+            &[("osm", "master-osm")],
+        )
+        .unwrap();
+        let mut meters = vec![vec![1., 1., 25., 30.]; 4];
+        let mut mask = vec![vec![80, 80, 80, 50]; 4];
+        let snapshot = policy.capture(&meters, &mask, &[0., 0., 3., 3.]).unwrap();
+        snapshot.restore(&mut meters, &mut mask);
+        let scaled: Vec<Vec<f32>> = meters
+            .iter()
+            .map(|r| r.iter().map(|h| (h + 10.) as f32).collect())
+            .collect();
+        let protection = snapshot.into_protection(&scaled);
+        let (template, args, _) = export_fixture();
+        let mut ground = ground_with(scaled);
+        ground.ground_level = 10;
+        ground.elevation_data.as_mut().unwrap().ground_level = 10;
+        ground.export_context = template.export_context;
+        ground.land_cover = Some(LandCoverData {
+            grid: mask,
+            width: 4,
+            height: 4,
+            water_distance: vec![vec![0; 4]; 4],
+            water_blend_cache: once_cell::sync::OnceCell::new(),
+            cells_per_meter: 1.,
+        });
+        ground.coastal_protection = Some(protection);
+        let bbox = LLBBox::new(0., 0., 3., 3.).unwrap();
+        assert!(
+            ground
+                .to_master_grid(&bbox, &args, &"a".repeat(64), &"b".repeat(64))
+                .is_err(),
+            "unfinalized coastal export must fail"
+        );
+        ground.elevation_data.as_mut().unwrap().heights = vec![vec![999.; 4]; 4];
+        ground.land_cover.as_mut().unwrap().grid = vec![vec![80; 4]; 4];
+        ground.finalize_coastal_master();
+        assert_eq!(
+            ground.elevation_data.as_ref().unwrap().heights[1],
+            vec![10., 10., 35., 40.]
+        );
+        assert_eq!(
+            ground.land_cover.as_ref().unwrap().grid[1],
+            vec![80, 80, 0, 50]
+        );
+        let grid = ground
+            .to_master_grid(&bbox, &args, &"a".repeat(64), &"b".repeat(64))
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coastal.grid");
+        crate::elevation::master_grid::save(&path, &grid).unwrap();
+        let a = crate::elevation::master_grid::load_slice(&path, 0, 1, 3, 3).unwrap();
+        let b = crate::elevation::master_grid::load_slice(&path, 1, 0, 3, 3).unwrap();
+        for row in 1..3 {
+            for col in 1..3 {
+                let ai = (row - 1) * 3 + col;
+                let bi = row * 3 + col - 1;
+                assert_eq!(a.elevation[ai], b.elevation[bi]);
+                assert_eq!(a.land_cover[ai], b.land_cover[bi]);
+                assert_eq!(a.water_distance[ai], b.water_distance[bi]);
+                assert_eq!(a.water_blend[ai], b.water_blend[bi]);
+            }
+        }
+        let before = a.elevation.clone();
+        let mut tile = Ground::from_master_slice(a).unwrap();
+        tile.finalize_coastal_master();
+        assert_eq!(
+            tile.elevation_data
+                .unwrap()
+                .heights
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>(),
+            before
+        );
     }
 
     #[test]
@@ -1557,6 +1650,20 @@ mod tiler_master_tests {
 }
 
 impl Ground {
+    pub(crate) fn finalize_coastal_master(&mut self) {
+        if self.immutable_master {
+            return;
+        }
+        if let (Some(protection), Some(ed), Some(lc)) = (
+            self.coastal_protection.take(),
+            self.elevation_data.as_mut(),
+            self.land_cover.as_mut(),
+        ) {
+            protection.restore(&mut ed.heights, lc);
+            let _ = lc.water_blend_grid();
+        }
+    }
+
     /// Snapshot the complete master after the caller applies OSM and bridge repairs.
     /// Floors and affine parameters are retained from the original elevation pass.
     pub(crate) fn to_master_grid(
@@ -1568,7 +1675,11 @@ impl Ground {
     ) -> std::io::Result<crate::elevation::master_grid::Grid> {
         use crate::elevation::master_grid::{Grid, Metadata, ProviderAttempt, MAX_CELLS};
         let invalid = |message: &str| std::io::Error::new(std::io::ErrorKind::InvalidData, message);
-        if !self.elevation_enabled || self.immutable_master || self.rotation_mask.is_some() {
+        if !self.elevation_enabled
+            || self.immutable_master
+            || self.rotation_mask.is_some()
+            || self.coastal_protection.is_some()
+        {
             return Err(invalid(
                 "export requires a complete unrotated elevation master",
             ));
@@ -1769,6 +1880,7 @@ impl Ground {
             immutable_master: true,
             master_offset: Some((tile.col as i32, tile.row as i32)),
             export_context: None,
+            coastal_protection: None,
             snow_threshold_y: meta.snow_threshold_y,
             climate,
         })

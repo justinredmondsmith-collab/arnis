@@ -34,11 +34,18 @@
       "path": "esa-tile.bin",
       "sha256": "83a785be652e24d8761f83c999c305f9c740f19d55e3ea019e1d1b6bf55c9cbe",
       "size_bytes": 45417
+    },
+    {
+      "kind": "water_classification",
+      "key": "master-water-classification",
+      "path": "provider-water-classification.json",
+      "sha256": "170d631cc66a9c5861cfbb7816571ccf9e6b1500b864b004751153cdbc8f07e7",
+      "size_bytes": 684
     }
   ],
-  "profile_sha256": "0e9688f0976c7053e07db398dec95466edeca0d49ddbed47e0a7581f29e80cc6",
+  "profile_sha256": "02e80bc12bdc17483b94031ca1f78a842371226c8f997909f8fded5adfe2f81b",
   "schema_version": 1,
-  "fixture_notes": "Real provider bytes for a 108-cell decoder check; empty synthetic OSM. Not NYC coastal or world qualification.",
+  "fixture_notes": "Real provider bytes for a 108-cell decoder check; empty synthetic OSM. Coastal wet assertion follows all-water ESA footprint at this tiny harbor bbox; not waterfront or full world qualification.",
   "bbox": [
     40.7,
     -74.01,

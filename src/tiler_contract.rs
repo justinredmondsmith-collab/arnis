@@ -476,8 +476,10 @@ pub(crate) fn admit_sources(path: &std::path::Path) -> Result<AdmittedSources, C
             "land_cover",
             "climate",
             "legacy_tree_asset",
+            "water_classification",
         ]
         .contains(&entry.kind.as_str())
+            || (entry.kind == "water_classification" && entry.key != "master-water-classification")
             || entry.key.is_empty()
             || !keys.insert((entry.kind.clone(), entry.key.clone()))
         {
@@ -573,6 +575,30 @@ pub(crate) mod frozen_tests {
         .unwrap();
         let sources = admit_sources(&manifest).unwrap();
         (dir, sources)
+    }
+    #[test]
+    fn coastal_classification_source_is_an_admitted_frozen_kind() {
+        let (_dir, sources) = fixture("water_classification", "master-water-classification", b"{}");
+        assert_eq!(
+            sources
+                .resolve(
+                    "water_classification",
+                    "master-water-classification",
+                    16_777_216
+                )
+                .unwrap(),
+            b"{}"
+        );
+    }
+    #[test]
+    fn coastal_classification_rejects_unknown_logical_key() {
+        let (dir, _) = fixture("water_classification", "master-water-classification", b"{}");
+        let path = dir.path().join("manifest.json");
+        let bytes = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("master-water-classification", "unknown-classification");
+        std::fs::write(&path, bytes).unwrap();
+        assert!(admit_sources(&path).is_err());
     }
     #[test]
     fn frozen_returns_exact_verified_bytes_and_rechecks_mutation() {

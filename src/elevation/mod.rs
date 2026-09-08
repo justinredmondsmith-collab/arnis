@@ -140,6 +140,7 @@ pub fn fetch_elevation_data(
         source_mode,
         benchmark,
         None,
+        None,
     )
 }
 
@@ -155,7 +156,18 @@ pub(crate) fn fetch_elevation_data_with_sources(
     source_mode: SourceMode,
     benchmark: bool,
     sources: Option<&crate::tiler_contract::AdmittedSources>,
+    coastal_protection: Option<&mut Option<crate::coastal::CoastalProtection>>,
 ) -> Result<ElevationData, Box<dyn std::error::Error>> {
+    let mut land_cover = land_cover;
+    let master_bbox = [
+        bbox.min().lat(),
+        bbox.min().lng(),
+        bbox.max().lat(),
+        bbox.max().lng(),
+    ];
+    let coastal = sources
+        .map(|s| crate::coastal::CoastalPolicy::load(s, &master_bbox).map_err(|e| e.message))
+        .transpose()?;
     let mut bench = crate::bench::Bench::new(benchmark);
     let (world_width, world_height, grid_width, grid_height) = compute_grid_dims(bbox, scale);
 
@@ -198,6 +210,15 @@ pub(crate) fn fetch_elevation_data_with_sources(
     // Safety net: fill any remaining NaN from tile gaps or partial provider coverage
     fill_nan_values(&mut height_grid);
     bench.mark("elev_fill_nan");
+    let coastal_snapshot = coastal
+        .as_ref()
+        .map(|policy| {
+            let lc = land_cover
+                .as_ref()
+                .ok_or("Coastal policy requires land cover")?;
+            policy.capture(&height_grid, &lc.grid, &master_bbox)
+        })
+        .transpose()?;
 
     // Land-cover-aware repair: built-up Gaussian smoothing targets urban
     // LiDAR/DSM classification errors, coastal pull-down flattens the
@@ -232,7 +253,7 @@ pub(crate) fn fetch_elevation_data_with_sources(
         (0.0, 0)
     };
 
-    if let Some(lc) = land_cover {
+    if let Some(lc) = land_cover.as_mut() {
         // The land-cover Gaussian is the slowest elevation step on big areas;
         // animate the bar across 14->16% as it runs instead of freezing.
         apply_land_cover_repair(
@@ -242,6 +263,12 @@ pub(crate) fn fetch_elevation_data_with_sources(
             coastal_pull_cells,
             m_per_cell,
             &|f| emit_gui_progress_update(14.0 + f * 2.0, "Processing elevation..."),
+        );
+    }
+    if let Some(snapshot) = &coastal_snapshot {
+        snapshot.restore(
+            &mut height_grid,
+            &mut land_cover.as_mut().expect("validated land cover").grid,
         );
     }
     bench.mark("elev_landcover_repair");
@@ -277,6 +304,9 @@ pub(crate) fn fetch_elevation_data_with_sources(
         .into_iter()
         .map(|row| row.into_iter().map(|v| v as f32).collect())
         .collect();
+    if let (Some(snapshot), Some(out)) = (coastal_snapshot, coastal_protection) {
+        *out = Some(snapshot.into_protection(&mc_heights_f32));
+    }
     bench.mark("elev_downcast");
     emit_gui_progress_update(18.0, "Processing elevation...");
 

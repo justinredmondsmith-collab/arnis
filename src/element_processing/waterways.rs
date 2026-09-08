@@ -138,8 +138,9 @@ fn create_water_channel(
                 if editor.tiler_owns_bathymetry() {
                     // Segment endpoints may be outside this slice. Keep each admitted
                     // master cell's own height instead of leveling from local endpoints.
-                    let water_y = editor.get_water_level(x, z);
-                    editor.set_block_if_absent_absolute(WATER, x, water_y, z);
+                    if let Some(water_y) = editor.master_water_surface(x, z) {
+                        editor.set_block_if_absent_absolute(WATER, x, water_y, z);
+                    }
                     continue;
                 }
                 let ground_y = editor.get_ground_level(x, z);
@@ -177,6 +178,22 @@ fn create_water_channel(
 mod tiler_water_tests {
     use super::*;
     #[test]
+    fn coastal_waterway_cannot_repaint_rejected_master_land() {
+        let bounds =
+            crate::coordinate_system::cartesian::XZBBox::rect_from_min_max(0, 0, 15, 15).unwrap();
+        let ll =
+            crate::coordinate_system::geographic::LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+        let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+        editor.set_ground(std::sync::Arc::new(
+            crate::water_depth::tests::master_ground(16, 70.0, &[(6, 6)]),
+        ));
+        editor.set_external_tile(true);
+        create_water_channel(&mut editor, 6, 6, 4, 85);
+        assert!(editor.get_block_absolute(6, 70, 6).is_none());
+        assert_eq!(editor.get_block_absolute(7, 70, 6), Some(WATER));
+        assert!(editor.get_block_absolute(7, 85, 6).is_none());
+    }
+    #[test]
     fn tiler_water_channel_uses_each_master_cell_and_preserves_land() {
         let bounds =
             crate::coordinate_system::cartesian::XZBBox::rect_from_min_max(0, 0, 15, 15).unwrap();
@@ -184,7 +201,7 @@ mod tiler_water_tests {
             crate::coordinate_system::geographic::LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
         let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
         editor.set_ground(std::sync::Arc::new(
-            crate::ground::Ground::new_elevation_test(vec![vec![71.0; 16]; 16], 16, 16),
+            crate::water_depth::tests::master_ground(16, 71.0, &[]),
         ));
         editor.set_external_tile(true);
         editor.set_block_absolute(STONE, 7, 71, 7, None, Some(&[]));

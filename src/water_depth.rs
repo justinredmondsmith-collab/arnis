@@ -364,6 +364,14 @@ pub fn carve_water_column(
     bwf: &BigWaterField,
 ) {
     // OSM may fill vacant water surfaces, but neither route may erase placed land.
+    let water_y = if editor.tiler_owns_bathymetry() {
+        let Some(surface) = editor.master_water_surface(x, z) else {
+            return;
+        };
+        surface
+    } else {
+        water_y
+    };
     if road_mask.contains(x, z)
         || editor
             .get_block_absolute(x, water_y, z)
@@ -766,8 +774,49 @@ pub fn carve_lc_water_region(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    pub(crate) fn master_ground(size: usize, surface: f32, dry: &[(usize, usize)]) -> Ground {
+        use crate::elevation::master_grid;
+        let mut grid = master_grid::tests::fixture();
+        grid.metadata.width = size as u32;
+        grid.metadata.height = size as u32;
+        grid.metadata.world_width = size as u32;
+        grid.metadata.world_height = size as u32;
+        grid.metadata.payload_bytes = (size * size * 10) as u64;
+        grid.elevation = vec![surface; size * size];
+        grid.land_cover = vec![LC_WATER; size * size];
+        grid.water_distance = vec![5; size * size];
+        grid.water_blend = vec![1.0; size * size];
+        for &(x, z) in dry {
+            grid.land_cover[z * size + x] = 0;
+            grid.water_distance[z * size + x] = 0;
+            grid.water_blend[z * size + x] = 0.0;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("grid");
+        master_grid::save(&path, &grid).unwrap();
+        Ground::from_master_slice(
+            master_grid::load_slice(&path, 0, 0, size as u32, size as u32).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn coastal_carve_obeys_master_mask_and_surface_at_nonzero_origin() {
+        let bounds = XZBBox::rect_from_min_max(32, 48, 39, 55).unwrap();
+        let mut editor = water_editor(&bounds, true);
+        editor.set_ground(std::sync::Arc::new(master_ground(8, 70.0, &[(3, 3)])));
+        editor.set_ground_origin(32, 48);
+        let roads = RoadMaskBitmap::new_empty();
+        for x in [35, 36] {
+            carve_water_column(&mut editor, x, 51, 85, 0, &roads, &BigWaterField::empty());
+        }
+        assert!(editor.get_block_absolute(35, 70, 51).is_none());
+        assert!(editor.get_block_absolute(35, 85, 51).is_none());
+        assert_eq!(editor.get_block_absolute(36, 70, 51), Some(WATER));
+        assert!(editor.get_block_absolute(36, 85, 51).is_none());
+    }
     fn water_editor(bounds: &XZBBox, external: bool) -> WorldEditor<'_> {
         let ll =
             crate::coordinate_system::geographic::LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
@@ -780,6 +829,7 @@ mod tests {
     fn tiler_water_column_retains_surface_without_renderer_bed_or_depth() {
         let bounds = XZBBox::rect_from_min_max(0, 0, 7, 7).unwrap();
         let mut editor = water_editor(&bounds, true);
+        editor.set_ground(std::sync::Arc::new(master_ground(8, 70.0, &[])));
         let roads = RoadMaskBitmap::new(&bounds);
         carve_water_column(&mut editor, 3, 3, 70, 6, &roads, &BigWaterField::empty());
         assert_eq!(editor.get_block_absolute(3, 70, 3), Some(WATER));

@@ -717,6 +717,12 @@ fn scanline_fill_water(
                 if road_mask.contains(x, z) {
                     continue;
                 }
+                if editor.tiler_owns_bathymetry() {
+                    if let Some(surface) = editor.master_water_surface(x, z) {
+                        carve_water_column(editor, x, z, surface, 0, road_mask, bwf);
+                    }
+                    continue;
+                }
                 let ground_y = editor.get_ground_level(x, z);
                 let water_y = match still_surface {
                     Some(surface) => {
@@ -749,10 +755,6 @@ fn scanline_fill_water(
                 {
                     continue;
                 }
-                if editor.tiler_owns_bathymetry() {
-                    carve_water_column(editor, x, z, water_y, 0, road_mask, bwf);
-                    continue;
-                }
                 // Over a bore, fill down to the terrain but never carve into it.
                 if tunnel_footprint.contains(x, z) {
                     for y in (ground_y + 1).min(water_y)..=water_y {
@@ -775,6 +777,34 @@ mod tests {
     use std::collections::HashMap as StdMap;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn coastal_osm_polygon_cannot_repaint_rejected_master_land() {
+        let bounds = XZBBox::rect_from_min_max(0, 0, 15, 15).unwrap();
+        let ll = LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+        let ground = crate::water_depth::tests::master_ground(16, 70.0, &[(6, 6)]);
+        let bwf = crate::water_depth::compute_big_water_field(&ground, &bounds);
+        let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+        editor.set_ground(Arc::new(ground));
+        editor.set_external_tile(true);
+        let outer = ring(1, 2, 13).nodes.into_iter().map(|n| n.xz()).collect();
+        scanline_fill_water(
+            0,
+            0,
+            15,
+            15,
+            &[outer],
+            &[],
+            &mut editor,
+            &bwf,
+            &CoordinateBitmap::new_empty(),
+            &CoordinateBitmap::new_empty(),
+            Some(85),
+        );
+        assert!(editor.get_block_absolute(6, 70, 6).is_none());
+        assert_eq!(editor.get_block_absolute(7, 70, 6), Some(WATER));
+        assert!(editor.get_block_absolute(7, 85, 6).is_none());
+    }
 
     fn ring(id: u64, min: i32, max: i32) -> ProcessedWay {
         let corner = |i: u64, x: i32, z: i32| ProcessedNode {
@@ -845,6 +875,11 @@ mod tests {
         let ll = LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
         let ground = crate::ground::Ground::new_elevation_test(vec![vec![70.0; 16]; 16], 16, 16);
         for external in [false, true] {
+            let ground = if external {
+                crate::water_depth::tests::master_ground(16, 70.0, &[])
+            } else {
+                ground.clone()
+            };
             for surface in [None, Some(70)] {
                 let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
                 editor.set_ground(Arc::new(ground.clone()));
