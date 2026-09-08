@@ -139,3 +139,5 @@ Development evidence: `/tmp/arnis-v31-parser-seams-27e88f19/results.json` and
 `differences.json`. This resolves the fixed built-scene acceptance in issue #10.
 It does not qualify general tiling, change the empty capability report, publish a
 release, merge branches, install a renderer, or mutate canonical worlds.
+
+Separate unresolved water/vegetation blocker: [renderer #11](https://github.com/justinredmondsmith-collab/arnis/issues/11).
