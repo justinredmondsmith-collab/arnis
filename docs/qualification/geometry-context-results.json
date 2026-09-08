@@ -1,0 +1,94 @@
+{
+  "schema": "arnis-tiler/checkpoint/geometry-context/1",
+  "release_qualified": false,
+  "upstream": {
+    "tag": "v3.1.0",
+    "commit": "3918513acb4e5e9ef4332418531a7c444d2b5acf"
+  },
+  "renderer_source_commit": "37b081ff32f205f9f7a267f60b9f19c9a4cd7bc8",
+  "renderer_binary_sha256": "36efede75c46563e99c25f022cd9021c5143a1a86b47324bf348d3d5c26c5839",
+  "profile_sha256": "02e80bc12bdc17483b94031ca1f78a842371226c8f997909f8fded5adfe2f81b",
+  "supervision_policy_sha256": "0908c69e9d870a75ff6e267f74672954794be24872e229d0297123d833880208",
+  "checks": {
+    "headless_passed": 728,
+    "headless_ignored": 6,
+    "headless_failed": 0,
+    "formatter": "passed",
+    "clippy": "passed; 15 unchanged upstream warnings",
+    "locked_headless_release": "passed",
+    "spec_review": "approved",
+    "quality_review": "approved"
+  },
+  "scenes": [
+    {
+      "scene": "tunnel",
+      "width": 85,
+      "height": 112,
+      "core_blocks": 64,
+      "source_sha256": "81581f7fff3c049e15e15eb676ac2bb7c0d89a1da95550c82ad1c5b8f40c12d9",
+      "master_sha256": "89d27a0d507c1ac23603d58fb76effd0924883c969d8b6d5458293dbecc10b1f",
+      "plan_sha256": "6a8372d849d027f03331d1f8a9cd27dac854275f59fc87b62eac88f7b5d56dc7",
+      "whole_content_sha256": "9e299e1685184f4f16327e975f6eae57c30bf712ca4560a6f915fe320210b702",
+      "tiled_content_sha256": "a522d166768a78c10a0ce6bac973944fc5210468525ba824e846c81addba7006",
+      "before_differing_blocks": 276,
+      "after_differing_blocks": 235,
+      "after_non_texture_differences": 0,
+      "after_other_chunk_differences": 0,
+      "remaining_differences_match_baseline_exactly": true
+    },
+    {
+      "scene": "rail_tunnel",
+      "width": 85,
+      "height": 112,
+      "core_blocks": 64,
+      "source_sha256": "082f0278a94223e4fb02a7dd89b8e270f2b9439d9350b7a4a3d257243e26ef21",
+      "master_sha256": "6e50c6d94d2d2778ff8b739181f8ddb788ba2ba07c5238f8ca6b89d1bd9f5618",
+      "plan_sha256": "6a8372d849d027f03331d1f8a9cd27dac854275f59fc87b62eac88f7b5d56dc7",
+      "whole_content_sha256": "aadef0e0370bbb8d975ec7ae580cc01e5072e448b20e2481452425458d964185",
+      "tiled_content_sha256": "2fa6690ef48fd4469a9cd60cc4fc81c31ca6ed81c873522654e7a8ab6acac17e",
+      "before_differing_blocks": 240,
+      "after_differing_blocks": 235,
+      "after_non_texture_differences": 0,
+      "after_other_chunk_differences": 0,
+      "remaining_differences_match_baseline_exactly": true
+    },
+    {
+      "scene": "polygon",
+      "width": 85,
+      "height": 112,
+      "core_blocks": 64,
+      "source_sha256": "bb778fd8b634cdf23dc1041964e700b5ca7881b33870162f238af0ca467ef09c",
+      "master_sha256": "a619b7cd4b13d6f28c4f4c74fbeae9f2b83fc8f998976fb14a856a521b444355",
+      "plan_sha256": "6a8372d849d027f03331d1f8a9cd27dac854275f59fc87b62eac88f7b5d56dc7",
+      "whole_content_sha256": "401ef77162ec598e96c68e5a00dca4c0ce16c3b58afa630af921202040c2efb0",
+      "tiled_content_sha256": "401ef77162ec598e96c68e5a00dca4c0ce16c3b58afa630af921202040c2efb0",
+      "before_differing_blocks": 10,
+      "after_differing_blocks": 0,
+      "after_non_texture_differences": 0,
+      "after_other_chunk_differences": 0,
+      "remaining_differences_match_baseline_exactly": true
+    },
+    {
+      "scene": "built",
+      "width": 85,
+      "height": 112,
+      "core_blocks": 64,
+      "source_sha256": "6bd0832ecfc63c4ac5bd1d03b6ab29c8c9b0894a20bc5f2135ebcd2b8e81e02d",
+      "master_sha256": "a911b51f30af8c317abf208134aefa8e8cb1a07de044195f95a57373141734fc",
+      "plan_sha256": "6a8372d849d027f03331d1f8a9cd27dac854275f59fc87b62eac88f7b5d56dc7",
+      "whole_content_sha256": "3c6f680af331b76377ad5a8f15691c726f32534e9076ee530f1483dc105e41c1",
+      "tiled_content_sha256": "3c6f680af331b76377ad5a8f15691c726f32534e9076ee530f1483dc105e41c1",
+      "before_differing_blocks": 0,
+      "after_differing_blocks": 0,
+      "after_non_texture_differences": 0,
+      "after_other_chunk_differences": 0,
+      "remaining_differences_match_baseline_exactly": true
+    }
+  ],
+  "limits": [
+    "Synthetic focused regressions, not arbitrary geography or maximum-size qualification",
+    "Known texture differences retained; vegetation RNG/noise/placement work remains",
+    "No block entity or actual Minecraft runtime qualification for this candidate",
+    "New external raster ordering changes 158 vegetation/air blocks in the built whole scene; stock path unchanged"
+  ]
+}

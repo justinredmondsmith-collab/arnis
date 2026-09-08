@@ -6,6 +6,44 @@ use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
 use crate::osm_parser::ProcessedNode;
 use std::collections::HashMap;
 
+/// Shared clipping frame for admitted external master geometry. Always translate back
+/// before intersecting edges, because rounding intersections in tile space is not invariant.
+#[derive(Clone)]
+pub(crate) struct MasterGeometry {
+    pub bounds: XZBBox,
+    pub offset: (i32, i32),
+}
+
+impl MasterGeometry {
+    fn translated(&self, nodes: &[ProcessedNode]) -> Vec<ProcessedNode> {
+        nodes
+            .iter()
+            .cloned()
+            .map(|mut n| {
+                n.x += self.offset.0;
+                n.z += self.offset.1;
+                n
+            })
+            .collect()
+    }
+
+    fn local(&self, mut nodes: Vec<ProcessedNode>) -> Vec<ProcessedNode> {
+        for n in &mut nodes {
+            n.x -= self.offset.0;
+            n.z -= self.offset.1;
+        }
+        nodes
+    }
+
+    pub(crate) fn clip_way(&self, nodes: &[ProcessedNode]) -> Vec<ProcessedNode> {
+        self.local(clip_way_to_bbox(&self.translated(nodes), &self.bounds))
+    }
+
+    pub(crate) fn clip_water(&self, nodes: &[ProcessedNode]) -> Option<Vec<ProcessedNode>> {
+        clip_water_ring_to_bbox(&self.translated(nodes), &self.bounds).map(|ring| self.local(ring))
+    }
+}
+
 /// Clips a way to the bounding box using Sutherland-Hodgman for polygons or
 /// simple line clipping for polylines. Preserves endpoint IDs for ring assembly.
 pub fn clip_way_to_bbox(nodes: &[ProcessedNode], xzbbox: &XZBBox) -> Vec<ProcessedNode> {

@@ -967,28 +967,23 @@ fn parse_osm_data_inner(
             continue;
         }
 
-        // Keep highway segment starts shared across master slices: tile-local
-        // clipping would restart dash counters at each newly clipped endpoint.
-        // Selection still uses the tile bbox above. Rendering nodes are clipped
-        // to the admitted master (at most 16,384 samples per segment axis), not
-        // retained from an arbitrarily long source way. Clip before translation
-        // so intersection rounding is identical to the whole-master render.
-        let nodes = if way.tags.contains_key("highway")
-            && way.tags.get("area").map(String::as_str) != Some("yes")
+        // Keep line phase and polygon membership in one shared master geometry.
+        // Tile clipping is selection only; clipping rounded vertices a second time
+        // would change interior lattice cells. Raster consumers crop their output.
+        // Master clipping also bounds retained line work to the admitted extent.
+        let nodes = if (way.tags.contains_key("highway")
+            && way.tags.get("area").map(String::as_str) != Some("yes"))
+            || way.tags.contains_key("railway")
+            || (way.nodes.len() >= 4
+                && way.nodes.first().map(|n| (n.x, n.z)) == way.nodes.last().map(|n| (n.x, n.z)))
         {
             if let Some((master_bounds, (col, row))) = coord_transformer.master_bounds_and_offset()
             {
-                let mut master_nodes = way.nodes.clone();
-                for node in &mut master_nodes {
-                    node.x += col;
-                    node.z += row;
+                crate::clipping::MasterGeometry {
+                    bounds: master_bounds,
+                    offset: (col, row),
                 }
-                let mut master_nodes = clip_way_to_bbox(&master_nodes, &master_bounds);
-                for node in &mut master_nodes {
-                    node.x -= col;
-                    node.z -= row;
-                }
-                master_nodes
+                .clip_way(&way.nodes)
             } else {
                 clipped_nodes
             }
@@ -1099,7 +1094,12 @@ fn parse_osm_data_inner(
                 let final_way = if keep_unclipped {
                     way
                 } else {
-                    let clipped_nodes = clip_way_to_bbox(&way.nodes, &xzbbox);
+                    let clipped_nodes = match coord_transformer.master_bounds_and_offset() {
+                        Some((bounds, offset)) => {
+                            crate::clipping::MasterGeometry { bounds, offset }.clip_way(&way.nodes)
+                        }
+                        None => clip_way_to_bbox(&way.nodes, &xzbbox),
+                    };
                     if clipped_nodes.is_empty() {
                         return None;
                     }
@@ -2542,6 +2542,105 @@ mod arch_era_tests {
 #[cfg(test)]
 mod tiler_parse_tests {
     use super::*;
+    #[test]
+    fn external_polygon_coverage_preserves_master_membership() {
+        use crate::floodfill_cache::FloodFillCache;
+        use std::collections::HashSet;
+        let bbox = LLBBox::from_str("40,-74,41,-73").unwrap();
+        let points = [(0, 0), (200, 73), (200, 100), (0, 100)];
+        let mut raw: Vec<_> = points.iter().enumerate().map(|(i, &(x,z))|
+            serde_json::json!({"type":"node","id":i+1,"lat":41.0-f64::from(z)/200.0,"lon":-74.0+f64::from(x)/200.0})
+        ).collect();
+        raw.push(serde_json::json!({"type":"way","id":100,"nodes":[1,2,3,4,1],"tags":{"landuse":"forest"}}));
+        let raw = serde_json::json!({"elements":raw});
+        let mut fills = Vec::new();
+        for (col, row, width, height) in [(0, 0, 201, 201), (48, 0, 96, 80)] {
+            let (frame, bounds) =
+                CoordTransformer::for_master_slice(&bbox, 201, 201, col, row, width, height)
+                    .unwrap();
+            let (elements, _, _, _) = parse_osm_data_with_frame(
+                serde_json::from_value(raw.clone()).unwrap(),
+                bbox,
+                1.0,
+                frame,
+                bounds.clone(),
+            );
+            let cache = FloodFillCache::precompute_master(
+                &elements,
+                None,
+                crate::clipping::MasterGeometry {
+                    bounds: XZBBox::rect_from_min_max(0, 0, 200, 200).unwrap(),
+                    offset: (col as i32, row as i32),
+                },
+                bounds.clone(),
+            );
+            let way = elements
+                .iter()
+                .find_map(|e| {
+                    if let ProcessedElement::Way(w) = e {
+                        Some(w)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap();
+            let fill: HashSet<_> = cache
+                .get_or_compute(way, None)
+                .iter()
+                .map(|&(x, z)| (x + col as i32, z + row as i32))
+                .filter(|&(x, z)| (48..144).contains(&x) && (0..80).contains(&z))
+                .collect();
+            assert!(
+                fill.contains(&(71, 26)),
+                "slice at {col} lost the master interior witness"
+            );
+            fills.push(fill);
+        }
+        assert_eq!(fills[0], fills[1]);
+    }
+
+    #[test]
+    fn external_rail_and_relation_keep_shared_geometry() {
+        let bbox = LLBBox::from_str("40,-74,41,-73").unwrap();
+        let raw = serde_json::json!({"elements":[
+            {"type":"node","id":1,"lat":40.8,"lon":-74.0},
+            {"type":"node","id":2,"lat":40.5,"lon":-73.0},
+            {"type":"node","id":3,"lat":40.2,"lon":-73.0},
+            {"type":"node","id":4,"lat":40.2,"lon":-74.0},
+            {"type":"way","id":10,"nodes":[1,2],"tags":{"railway":"rail","tunnel":"yes"}},
+            {"type":"way","id":20,"nodes":[1,2,3,4,1]},
+            {"type":"relation","id":30,"tags":{"type":"multipolygon","natural":"wood"},"members":[{"type":"way","ref":20,"role":"outer"}]}
+        ]});
+        let mut geometries = Vec::new();
+        for (col, width) in [(0, 201), (48, 96)] {
+            let (frame, bounds) =
+                CoordTransformer::for_master_slice(&bbox, 201, 201, col, 0, width, 201).unwrap();
+            let (elements, _, _, _) = parse_osm_data_with_frame(
+                serde_json::from_value(raw.clone()).unwrap(),
+                bbox,
+                1.0,
+                frame,
+                bounds,
+            );
+            let mut geometry = Vec::new();
+            for element in elements {
+                let nodes = match element {
+                    ProcessedElement::Way(w) if w.id == 10 => w.nodes,
+                    ProcessedElement::Relation(r) if r.id == 30 => r.members[0].way.nodes.clone(),
+                    _ => continue,
+                };
+                geometry.push(
+                    nodes
+                        .iter()
+                        .map(|n| (n.x + col as i32, n.z))
+                        .collect::<Vec<_>>(),
+                );
+            }
+            geometries.push(geometry);
+        }
+        assert_eq!(geometries[0], geometries[1]);
+    }
+
     fn parsed_pier_blocks(enclosing: bool) {
         use crate::block_definitions::{OAK_LOG, OAK_SLAB};
         use crate::elevation::master_grid;

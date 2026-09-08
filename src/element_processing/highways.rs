@@ -519,6 +519,26 @@ fn renders_as_highway_tunnel(way: &ProcessedWay) -> bool {
     )
 }
 
+/// Classify retained way endpoints using the geometry frame of their editor.
+pub(crate) fn collect_tunnel_internal_endpoints_for_editor(
+    elements: &[ProcessedElement],
+    editor: &WorldEditor,
+    bounds: &XZBBox,
+) -> TunnelInternalEndpoints {
+    let master_bounds = editor.master_geometry().map(|master| {
+        XZBBox::rect_from_min_max(
+            master.bounds.min_x() - master.offset.0,
+            master.bounds.min_z() - master.offset.1,
+            master.bounds.max_x() - master.offset.0,
+            master.bounds.max_z() - master.offset.1,
+        )
+        .expect("admitted translated master bounds")
+    });
+    // Retained endpoints are clipped only at the master edge. A supplied read
+    // window edge cannot turn a real portal into an underground continuation.
+    collect_tunnel_internal_endpoints(elements, master_bounds.as_ref().unwrap_or(bounds))
+}
+
 // Endpoints shared by 2+ tunnel ways; these stay at depth instead of ramping up.
 pub fn collect_tunnel_internal_endpoints(
     elements: &[ProcessedElement],
@@ -4036,7 +4056,7 @@ mod tests {
         elements: &[ProcessedElement],
     ) -> Vec<HighwayTunnelCell> {
         let args = Args::parse_from(["arnis", "--bbox", "1,2,3,4"]);
-        let endpoints = collect_tunnel_internal_endpoints(elements, bounds);
+        let endpoints = collect_tunnel_internal_endpoints_for_editor(elements, editor, bounds);
         let portals = test_portals(editor, elements, &endpoints);
         let footprint = collect_tunnel_footprint(elements, editor, &endpoints, bounds, 1.0);
         let outlines = crate::element_processing::bridge_styles::BridgeOutlineIndex::build(&[]);
@@ -4062,6 +4082,89 @@ mod tests {
         }
         carve_highway_tunnel_interior(editor, &cells);
         cells
+    }
+
+    fn external_tunnel_profiles(check_portals: bool) {
+        use crate::elevation::master_grid;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("master");
+        let mut grid = master_grid::tests::fixture();
+        grid.metadata.width = 85;
+        grid.metadata.height = 112;
+        grid.metadata.world_width = 85;
+        grid.metadata.world_height = 112;
+        grid.metadata.payload_bytes = 85 * 112 * 10;
+        grid.elevation = vec![70.0; 85 * 112];
+        grid.land_cover = vec![10; 85 * 112];
+        grid.water_distance = vec![0; 85 * 112];
+        grid.water_blend = vec![0.0; 85 * 112];
+        master_grid::save(&path, &grid).unwrap();
+        let mut profiles = Vec::new();
+        for (col, row, width, height) in [(0, 0, 85, 112), (0, 48, 80, 64), (48, 48, 37, 64)] {
+            let bounds = XZBBox::rect_from_min_max(0, 0, width - 1, height - 1).unwrap();
+            let ground = crate::ground::Ground::from_master_slice(
+                master_grid::load_slice(&path, col as u32, row as u32, width as u32, height as u32)
+                    .unwrap(),
+            )
+            .unwrap();
+            let mut editor = tunnel_editor(&bounds, ground);
+            let way = way_between(
+                1,
+                (20 - col, 102 - row),
+                (80 - col, 102 - row),
+                &[("highway", "service"), ("tunnel", "yes")],
+            );
+            let elements = vec![ProcessedElement::Way(way)];
+            let endpoints =
+                collect_tunnel_internal_endpoints_for_editor(&elements, &editor, &bounds);
+            if check_portals {
+                assert!(endpoints.is_empty(),"real portal was treated as a clipped continuation at ({col},{row}),width{width}");
+            }
+            let clipped = vec![ProcessedElement::Way(way_between(
+                2,
+                (1 - col, 40 - row),
+                (83 - col, 40 - row),
+                &[("highway", "service"), ("tunnel", "yes")],
+            ))];
+            let clipped_ends =
+                collect_tunnel_internal_endpoints_for_editor(&clipped, &editor, &bounds);
+            assert!(clipped_ends.contains(&(1 - col, 40 - row)));
+            assert!(clipped_ends.contains(&(83 - col, 40 - row)));
+            let cells = dispatch_highway_fixture(&mut editor, &bounds, &elements);
+            profiles.push(
+                cells
+                    .iter()
+                    .map(|c| {
+                        (
+                            c.x + col,
+                            c.z + row,
+                            c.road_y,
+                            c.covered,
+                            c.carve_top,
+                            c.light,
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(
+            profiles[0], profiles[1],
+            "read-window edge changed the tunnel profile"
+        );
+        assert_eq!(
+            profiles[0], profiles[2],
+            "translation changed the tunnel profile"
+        );
+    }
+
+    #[test]
+    fn external_tunnel_portals_ignore_supplied_window_edges() {
+        external_tunnel_profiles(true);
+    }
+
+    #[test]
+    fn external_tunnel_shell_profile_uses_master_boundary() {
+        external_tunnel_profiles(false);
     }
 
     #[test]

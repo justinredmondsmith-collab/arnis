@@ -493,6 +493,13 @@ impl<'a> WorldEditor<'a> {
         self.external_tile = enabled;
     }
 
+    pub(crate) fn master_geometry(&self) -> Option<crate::clipping::MasterGeometry> {
+        let mut frame = self.ground.as_ref()?.master_geometry()?;
+        frame.offset.0 -= self.ground_origin_x;
+        frame.offset.1 -= self.ground_origin_z;
+        Some(frame)
+    }
+
     /// Map local tile coordinates onto the shared master lattice for deterministic patterns.
     pub(crate) fn master_coordinates(&self, x: i32, z: i32) -> (i32, i32) {
         match self
