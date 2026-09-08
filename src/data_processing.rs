@@ -696,7 +696,8 @@ pub fn generate_world_with_options(
     let rail_mask =
         railways::collect_at_grade_rail_mask(&elements, &xzbbox, args.skip_railways.as_ref());
 
-    let tunnel_internal_endpoints = highways::collect_tunnel_internal_endpoints(&elements, &xzbbox);
+    let tunnel_internal_endpoints =
+        highways::collect_tunnel_internal_endpoints_for_editor(&elements, &editor, &xzbbox);
 
     // Tunnel bore footprints, so the water depth-carve and vegetation stay off them.
     let mut tunnel_footprint = highways::collect_tunnel_footprint(
