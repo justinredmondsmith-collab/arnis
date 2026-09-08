@@ -513,6 +513,21 @@ impl<'a> WorldEditor<'a> {
         self.external_tile
     }
 
+    /// Admitted wet mask and surface, without tile-local shoreline inference.
+    pub(crate) fn master_water_surface(&self, x: i32, z: i32) -> Option<i32> {
+        if !self.external_tile
+            || x < self.xzbbox.min_x()
+            || x > self.xzbbox.max_x()
+            || z < self.xzbbox.min_z()
+            || z > self.xzbbox.max_z()
+        {
+            return None;
+        }
+        let ground = self.ground.as_ref()?;
+        let coord = self.ground_point(x, z);
+        (ground.cover_class(coord) == crate::land_cover::LC_WATER).then(|| ground.level(coord))
+    }
+
     /// Bedrock only: enable the starting map that reveals the world as the player explores.
     pub fn set_start_with_map(&mut self, enabled: bool) {
         self.start_with_map = enabled;

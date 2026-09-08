@@ -206,6 +206,7 @@ pub(crate) fn run(
                     io_error(e)
                 }
             })?;
+            crate::coastal::CoastalPolicy::load(&sources, &tile.metadata.bbox)?;
             tile.validate_request(
                 [
                     bbox.min().lat(),
@@ -285,6 +286,15 @@ pub(crate) fn run(
             })
         }
         Action::Export { destination } => {
+            crate::coastal::CoastalPolicy::load(
+                &sources,
+                &[
+                    bbox.min().lat(),
+                    bbox.min().lng(),
+                    bbox.max().lat(),
+                    bbox.max().lng(),
+                ],
+            )?;
             let (world_w, world_h, w, h) = crate::elevation::compute_grid_dims(&bbox, args.scale);
             if (world_w, world_h) != (w, h) {
                 return Err(incompatible("Downsampled masters are outside this profile"));
@@ -309,6 +319,7 @@ pub(crate) fn run(
                 ground.apply_osm_water_override(&elements, &bounds);
                 ground.apply_osm_land_override(&elements, &bounds, args.scale);
                 ground.apply_bridge_land_cover_repair(&elements, &bounds, args.scale);
+                ground.finalize_coastal_master();
                 let grid = ground
                     .to_master_grid(&bbox, &args, &sources.sha256, &profile)
                     .map_err(io_error)?;
@@ -380,7 +391,10 @@ mod ingress_tests {
         std::fs::write(root.path().join("osm.json"), osm).unwrap();
         let climate = include_bytes!("../assets/climate/koppen_0p1.bin");
         std::fs::write(root.path().join("climate.bin"), climate).unwrap();
+        let classification = serde_json::to_vec(&serde_json::json!({"schema_version":1,"policy":"master-coastal-water-v1","bbox":master_grid::tests::fixture().metadata.bbox,"default_classification":"inland","sources":[{"kind":"osm","key":"master-osm"}],"coastal_domains":[]})).unwrap();
+        std::fs::write(root.path().join("water.json"), &classification).unwrap();
         let manifest = serde_json::to_vec(&serde_json::json!({"schema_version":1,"profile_sha256":profile_hash(),"entries":[
+            {"kind":"water_classification","key":"master-water-classification","path":"water.json","sha256":format!("{:x}",Sha256::digest(&classification)),"size_bytes":classification.len()},
             {"kind":"osm","key":"master-osm","path":"osm.json","sha256":format!("{:x}",Sha256::digest(osm)),"size_bytes":osm.len()},
             {"kind":"climate","key":"koppen_0p1.bin","path":"climate.bin","sha256":format!("{:x}",Sha256::digest(climate)),"size_bytes":climate.len()}
         ]})).unwrap();

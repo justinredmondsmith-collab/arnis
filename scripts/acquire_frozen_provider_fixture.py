@@ -22,6 +22,8 @@ def acquire(destination):
             data = encoded({"elements": []})
         elif kind == "climate":
             data = (ROOT / "assets/climate" / key).read_bytes()
+        elif kind == "water_classification":
+            data = (ROOT / "docs/contracts" / entry["path"]).read_bytes()
         else:
             headers = {}
             if kind == "elevation":

@@ -46,6 +46,9 @@ unsupported world-edge AWS interpolation fails explicitly.
   The 108-cell fixture uses real AWS/ESA data and empty synthetic OSM. It proves
   provider decoding and repeatability only, not coastal geometry or NYC quality.
 
+The evidence above describes the five-source recipe at frozen-stage commit d11a9bf.
+The current recipe adds the coastal declaration and new profile; see
+[v31 coastal validation](2026-09-07-v31-coastal-validation.md) for its distinct hashes.
 The source recipe is [frozen-provider-fixture.json](../contracts/frozen-provider-fixture.json).
 It records exact source hashes/sizes. Acquisition explicitly uses HTTP and rejects
 changed responses; source manifests are only emitted after every file verifies.

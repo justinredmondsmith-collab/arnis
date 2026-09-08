@@ -10,6 +10,7 @@ mod bresenham;
 mod canopy;
 mod climate;
 mod clipping;
+mod coastal;
 mod colors;
 mod coordinate_system;
 mod data_processing;

@@ -377,7 +377,12 @@ pub fn generate_ground_region(
                         } else {
                             0.0
                         };
-                        let grid_is_water = has_land_cover && ground.water_distance(coord) > 0;
+                        let grid_is_water = has_land_cover
+                            && if editor.tiler_owns_bathymetry() {
+                                ground.cover_class(coord) == land_cover::LC_WATER
+                            } else {
+                                ground.water_distance(coord) > 0
+                            };
                         // Probe a column for water at its *own* ground level.
                         // Previously this closed over the outer-cell ground_y,
                         // so probing a neighbour column whose terrain sits at
@@ -438,12 +443,20 @@ pub fn generate_ground_region(
                         // the 0.5 isoline of the smoothed water mask —
                         // instead of either the raw ESA 10 m rectangle grid
                         // or a stochastic noise-dithered transition.
-                        let is_esa_water =
-                            grid_is_water || placed_water || osm_gap || water_blend > 0.5;
+                        let is_esa_water = if editor.tiler_owns_bathymetry() {
+                            grid_is_water
+                        } else {
+                            grid_is_water || placed_water || osm_gap || water_blend > 0.5
+                        };
 
                         let mut water_y = 0;
                         let mut place_esa_water = false;
-                        if is_esa_water && !steep_override {
+                        if editor.tiler_owns_bathymetry() {
+                            if let Some(surface) = editor.master_water_surface(x, z) {
+                                water_y = surface;
+                                place_esa_water = true;
+                            }
+                        } else if is_esa_water && !steep_override {
                             // Snap water to local minimum on steep terrain to compensate
                             // for ESA/DEM spatial misalignment in canyons
                             let wy = ground.water_level(coord);
@@ -1043,15 +1056,23 @@ pub fn generate_ground_region(
                                             None,
                                         ) =>
                                     {
+                                        // Irrigation is water placement too: external terrain may
+                                        // only emit water authorized by the saved master mask.
+                                        let irrigation_y = if editor.tiler_owns_bathymetry() {
+                                            editor.master_water_surface(x, z)
+                                        } else {
+                                            Some(ground_y)
+                                        };
                                         // Irrigation dots, but only where boxed in so they can't flow downhill and wash out crops.
-                                        if x % 9 == 0
-                                            && z % 9 == 0
-                                            && editor.water_source_is_enclosed(x, z)
-                                        {
+                                        if let Some(water_y) = irrigation_y.filter(|_| {
+                                            x % 9 == 0
+                                                && z % 9 == 0
+                                                && editor.water_source_is_enclosed(x, z)
+                                        }) {
                                             editor.set_block_absolute(
                                                 WATER,
                                                 x,
-                                                ground_y,
+                                                water_y,
                                                 z,
                                                 Some(&[FARMLAND]),
                                                 None,
@@ -1085,15 +1106,23 @@ pub fn generate_ground_region(
                                     {
                                         let choice = rng.random_range(0..100);
                                         if choice < 30 {
-                                            // Water patches in wetlands
-                                            editor.set_block_absolute(
-                                                WATER,
-                                                x,
-                                                ground_y,
-                                                z,
-                                                Some(&[MUD, GRASS_BLOCK]),
-                                                None,
-                                            );
+                                            // Wetland/mangrove classes do not independently
+                                            // authorize water in an external master.
+                                            let water_y = if editor.tiler_owns_bathymetry() {
+                                                editor.master_water_surface(x, z)
+                                            } else {
+                                                Some(ground_y)
+                                            };
+                                            if let Some(water_y) = water_y {
+                                                editor.set_block_absolute(
+                                                    WATER,
+                                                    x,
+                                                    water_y,
+                                                    z,
+                                                    Some(&[MUD, GRASS_BLOCK]),
+                                                    None,
+                                                );
+                                            }
                                         } else if choice < 65 {
                                             editor.set_block_absolute(
                                                 GRASS,
@@ -1376,6 +1405,159 @@ pub(crate) fn value_noise_01(x: i32, z: i32, scale: i32) -> f64 {
 mod tiler_water_tests {
     use super::*;
     use clap::Parser;
+    fn decoration_water_count(class: u8, regional: bool, external: bool) -> usize {
+        let bounds = XZBBox::rect_from_min_max(0, 0, 19, 19).unwrap();
+        let ll =
+            crate::coordinate_system::geographic::LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+        let ground = Ground::new_flat_land_cover_test(
+            land_cover::LandCoverData {
+                grid: vec![vec![class; 20]; 20],
+                water_distance: vec![vec![0; 20]; 20],
+                water_blend_cache: once_cell::sync::OnceCell::with_value(vec![vec![0.; 20]; 20]),
+                width: 20,
+                height: 20,
+                cells_per_meter: 1.,
+            },
+            20,
+            20,
+        );
+        let args = Args::parse_from(["arnis", "--ground-level=0", "--no-3d", "--legacy-trees"]);
+        let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+        editor.set_ground(std::sync::Arc::new(ground.clone()));
+        editor.set_external_tile(external);
+        let outlines = crate::element_processing::bridge_styles::BridgeOutlineIndex::build(&[]);
+        let structures =
+            crate::element_processing::bridges::BridgeStructureMap::build(&[], &editor, &outlines);
+        let bridges = BridgeSurfaceMap::build(&[], &structures, 1.);
+        let mask = BuildingFootprintBitmap::new_empty();
+        if regional {
+            generate_ground_region(
+                &mut editor,
+                &ground,
+                &args,
+                &bounds,
+                &mask,
+                &mask,
+                &bridges,
+                0,
+                19,
+                0,
+                19,
+                false,
+            );
+        } else {
+            generate_ground_layer(&mut editor, &ground, &args, &bounds, &mask, &mask, &bridges)
+                .unwrap();
+        }
+        (0..20)
+            .flat_map(|x| (0..20).map(move |z| (x, z)))
+            .filter(|&(x, z)| editor.get_block_absolute(x, 0, z) == Some(WATER))
+            .count()
+    }
+
+    fn assert_wetland_decorations_preserve_master_mask(class: u8) {
+        for regional in [false, true] {
+            assert!(
+                decoration_water_count(class, regional, false) > 0,
+                "stock class={class}, regional={regional} lost wetland patches"
+            );
+            assert_eq!(
+                decoration_water_count(class, regional, true),
+                0,
+                "dry master class={class}, regional={regional} repainted by wetland patches"
+            );
+        }
+    }
+    #[test]
+    fn coastal_dry_wetland_decorations_cannot_repaint_master_mask() {
+        assert_wetland_decorations_preserve_master_mask(land_cover::LC_WETLAND);
+    }
+    #[test]
+    fn coastal_dry_mangrove_decorations_cannot_repaint_master_mask() {
+        assert_wetland_decorations_preserve_master_mask(land_cover::LC_MANGROVES);
+    }
+
+    #[test]
+    fn coastal_dry_cropland_irrigation_cannot_repaint_master_mask() {
+        for regional in [false, true] {
+            assert!(
+                decoration_water_count(land_cover::LC_CROPLAND, regional, false) > 0,
+                "stock regional={regional} lost irrigation"
+            );
+            assert_eq!(
+                decoration_water_count(land_cover::LC_CROPLAND, regional, true),
+                0,
+                "dry master regional={regional} repainted by irrigation"
+            );
+        }
+    }
+
+    #[test]
+    fn coastal_ground_film_obeys_mask_despite_blend_and_neighbor_water() {
+        let bounds = XZBBox::rect_from_min_max(0, 0, 7, 7).unwrap();
+        let ll =
+            crate::coordinate_system::geographic::LLBBox::from_str("40,-74,40.01,-73.99").unwrap();
+        let mut classes = vec![vec![land_cover::LC_WATER; 8]; 8];
+        classes[3][3] = 0;
+        let ground = Ground::new_flat_land_cover_test(
+            land_cover::LandCoverData {
+                grid: classes,
+                // Deep water has distance zero too: class is authoritative.
+                water_distance: vec![vec![0; 8]; 8],
+                water_blend_cache: once_cell::sync::OnceCell::with_value(vec![vec![1.0; 8]; 8]),
+                width: 8,
+                height: 8,
+                cells_per_meter: 1.0,
+            },
+            8,
+            8,
+        );
+        let args = Args::parse_from(["arnis", "--ground-level=0", "--no-3d", "--legacy-trees"]);
+        for regional in [false, true] {
+            let mut editor = WorldEditor::new("/dev/null/unused".into(), &bounds, ll);
+            editor.set_ground(std::sync::Arc::new(ground.clone()));
+            editor.set_external_tile(true);
+            editor.set_block_absolute(WATER, 2, 0, 3, None, Some(&[]));
+            editor.set_block_absolute(WATER, 4, 0, 3, None, Some(&[]));
+            let outlines = crate::element_processing::bridge_styles::BridgeOutlineIndex::build(&[]);
+            let structures = crate::element_processing::bridges::BridgeStructureMap::build(
+                &[],
+                &editor,
+                &outlines,
+            );
+            let bridges = BridgeSurfaceMap::build(&[], &structures, 1.0);
+            let mask = BuildingFootprintBitmap::new_empty();
+            if regional {
+                generate_ground_region(
+                    &mut editor,
+                    &ground,
+                    &args,
+                    &bounds,
+                    &mask,
+                    &mask,
+                    &bridges,
+                    0,
+                    7,
+                    0,
+                    7,
+                    false,
+                );
+            } else {
+                generate_ground_layer(&mut editor, &ground, &args, &bounds, &mask, &mask, &bridges)
+                    .unwrap();
+            }
+            assert_ne!(
+                editor.get_block_absolute(3, 0, 3),
+                Some(WATER),
+                "repainted rejected land"
+            );
+            assert_eq!(
+                editor.get_block_absolute(4, 0, 4),
+                Some(WATER),
+                "lost deep water"
+            );
+        }
+    }
     #[test]
     fn tiler_water_ground_paints_surface_without_bed_materials() {
         let bounds = XZBBox::rect_from_min_max(0, 0, 7, 7).unwrap();

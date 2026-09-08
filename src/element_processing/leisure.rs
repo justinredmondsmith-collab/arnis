@@ -57,6 +57,9 @@ pub fn generate_leisure(
                 block_type = blocks[0];
             }
         }
+        let master_water = editor.tiler_owns_bathymetry()
+            && block_type == WATER
+            && !matches!(leisure_type.as_str(), "swimming_pool" | "swimming_area");
 
         // Resolve the fill before painting the edge, for the same reason as in natural.rs:
         // a closed ring the fill refused must not leave a border around unfilled ground.
@@ -72,6 +75,12 @@ pub fn generate_leisure(
                 let bresenham_points: Vec<(i32, i32, i32)> =
                     bresenham_line(prev.0, 0, prev.1, node.x, 0, node.z);
                 for (bx, _, bz) in bresenham_points {
+                    if master_water {
+                        if let Some(surface) = editor.master_water_surface(bx, bz) {
+                            editor.set_block_if_absent_absolute(WATER, bx, surface, bz);
+                        }
+                        continue;
+                    }
                     editor.set_block(
                         block_type,
                         bx,
@@ -101,6 +110,12 @@ pub fn generate_leisure(
             let mut rng = element_rng(element.id);
 
             for &(x, z) in filled_area.iter() {
+                if master_water {
+                    if let Some(surface) = editor.master_water_surface(x, z) {
+                        editor.set_block_if_absent_absolute(WATER, x, surface, z);
+                    }
+                    continue;
+                }
                 editor.set_block(block_type, x, 0, z, Some(&[GRASS_BLOCK]), None);
 
                 // Land-cover water is skipped because a park often spans its
@@ -334,6 +349,41 @@ mod water_guard_tests {
             for (x, z) in [(2, 2), (5, 5)] {
                 assert!(editor.check_for_block(x, 0, z, Some(&[WATER])), "{leisure}");
             }
+        }
+    }
+
+    #[test]
+    fn coastal_marina_obeys_master_mask_but_swimming_features_remain_explicit() {
+        for leisure in ["marina", "swimming_pool", "swimming_area"] {
+            let (mut editor, args, bridges) = fixture();
+            editor.set_ground(std::sync::Arc::new(
+                crate::water_depth::tests::master_ground(16, 70.0, &[(2, 2), (5, 5)]),
+            ));
+            editor.set_external_tile(true);
+            generate_leisure(
+                &mut editor,
+                &ring(&[("leisure", leisure)]),
+                &args,
+                &FloodFillCache::new(),
+                &BuildingFootprintBitmap::new_empty(),
+                &bridges,
+            );
+            for (x, z) in [(2, 2), (5, 5)] {
+                assert_eq!(
+                    editor.get_block_absolute(x, 70, z),
+                    if leisure == "marina" {
+                        None
+                    } else {
+                        Some(WATER)
+                    },
+                    "{leisure}"
+                );
+            }
+            assert_eq!(
+                editor.get_block_absolute(6, 70, 5),
+                Some(WATER),
+                "{leisure}"
+            );
         }
     }
 }

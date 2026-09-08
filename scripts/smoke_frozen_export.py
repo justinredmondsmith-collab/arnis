@@ -13,7 +13,7 @@ import tempfile
 import zlib
 from pathlib import Path
 
-from smoke_tiler_cli import ROOT, encoded, run
+from smoke_tiler_cli import ROOT, encoded, inland_declaration, run
 
 BBOX = [40.7000, -74.0100, 40.7001, -74.0099]
 ESA_URL = (
@@ -55,6 +55,7 @@ def fixtures(root):
         )
 
     add("osm", "master-osm", encoded({"elements": []}))
+    add("water_classification", "master-water-classification", inland_declaration(BBOX))
     add("climate", "koppen_0p1.bin", (ROOT / "assets/climate/koppen_0p1.bin").read_bytes())
     tiles = set()
     for lat in (BBOX[0], BBOX[2]):
@@ -110,14 +111,24 @@ def smoke(candidate):
             ARNIS_FETCH_ONLY="1",
         )
         args = [f"--bbox={','.join(map(str, BBOX))}", f"--output-dir={root / 'unused-world'}"]
-        for label, selected in [
-            ("missing AWS", [e for e in entries if e["kind"] != "elevation"]),
-            ("missing ESA range", entries[:-1]),
-            ("missing climate", [e for e in entries if e["kind"] != "climate"]),
+        for label, selected, expected_code in [
+            ("missing AWS", [e for e in entries if e["kind"] != "elevation"], 1),
+            ("missing ESA range", entries[:-1], 1),
+            ("missing climate", [e for e in entries if e["kind"] != "climate"], 1),
+            (
+                "missing classification",
+                [e for e in entries if e["kind"] != "water_classification"],
+                3,
+            ),
         ]:
             manifest(selected)
             result = run(candidate, root, args, controls)
-            assert result.returncode == 1, (label, result.returncode, result.stderr, result.stdout)
+            assert result.returncode == expected_code, (
+                label,
+                result.returncode,
+                result.stderr,
+                result.stdout,
+            )
             assert not (root / "master.grid").exists(), label
             assert not (root / "unused-world").exists(), label
 
@@ -136,6 +147,44 @@ def smoke(candidate):
             assert result.returncode == 1, (kind, result.stderr, result.stdout)
             assert not (root / "master.grid").exists(), kind
             path.write_bytes(original)
+
+        entry = next(e for e in entries if e["kind"] == "water_classification")
+        path = root / entry["path"]
+        original = path.read_bytes()
+        south, west, north, east = BBOX
+        geometry = dict(
+            type="MultiPolygon",
+            coordinates=[
+                [[[west, south], [east, south], [east, north], [west, north], [west, south]]]
+            ],
+        )
+        conflict = json.loads(original)
+        conflict["coastal_domains"] = [
+            dict(
+                id="conflicting-wet-dem",
+                domain=geometry,
+                water=geometry,
+                inland_exclusions=dict(type="MultiPolygon", coordinates=[]),
+            )
+        ]
+        invalid = json.loads(original)
+        invalid["bbox"][0] = north
+        for value, code in [(invalid, 3), (conflict, 1)]:
+            data = encoded(value)
+            path.write_bytes(data)
+            selected = [dict(e) for e in entries]
+            changed = next(e for e in selected if e["path"] == entry["path"])
+            changed.update(sha256=hashlib.sha256(data).hexdigest(), size_bytes=len(data))
+            manifest(selected)
+            result = run(candidate, root, args, controls)
+            assert result.returncode == code, (
+                code,
+                result.returncode,
+                result.stderr,
+                result.stdout,
+            )
+            assert not (root / "master.grid").exists()
+        path.write_bytes(original)
 
         source_hash = manifest(entries)
         result = run(candidate, root, args, controls)

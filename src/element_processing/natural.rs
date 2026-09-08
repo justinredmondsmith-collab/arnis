@@ -170,6 +170,12 @@ pub fn generate_natural(
                     let bresenham_points: Vec<(i32, i32, i32)> =
                         bresenham_line(prev.0, 0, prev.1, x, 0, z);
                     for (bx, _, bz) in bresenham_points {
+                        if block_type == WATER && editor.tiler_owns_bathymetry() {
+                            if let Some(surface) = editor.master_water_surface(bx, bz) {
+                                editor.set_block_if_absent_absolute(WATER, bx, surface, bz);
+                            }
+                            continue;
+                        }
                         // Don't overwrite road blocks with natural ground
                         if !editor.check_for_block(
                             bx,
@@ -259,6 +265,12 @@ pub fn generate_natural(
                 let mut wetland_puddles: Vec<(i32, i32)> = Vec::new();
 
                 for &(x, z) in filled_area.iter() {
+                    if block_type == WATER && editor.tiler_owns_bathymetry() {
+                        if let Some(surface) = editor.master_water_surface(x, z) {
+                            editor.set_block_if_absent_absolute(WATER, x, surface, z);
+                        }
+                        continue;
+                    }
                     // Don't overwrite road/path blocks with natural ground
                     if !editor.check_for_block(x, 0, z, Some(protected_blocks)) {
                         let b = if rock_variation {
@@ -394,7 +406,7 @@ pub fn generate_natural(
                             editor.set_block(DEAD_BUSH, x, 1, z, None, None);
                         }
                         "shoal" if rng.random_bool(0.05) => {
-                            editor.set_block(WATER, x, 0, z, Some(&[SAND, GRAVEL]), None);
+                            place_natural_water(editor, x, z, &[SAND, GRAVEL]);
                         }
                         "wetland" => {
                             let wetland_type = element
@@ -413,7 +425,7 @@ pub fn generate_natural(
                             // Tidalflat stays bare mud with scattered water, no mosaic
                             if wetland_type == "tidalflat" {
                                 if rng.random_bool(0.3) {
-                                    editor.set_block(WATER, x, 0, z, Some(&[MUD]), None);
+                                    place_natural_water(editor, x, z, &[MUD]);
                                 }
                                 continue;
                             }
@@ -839,11 +851,23 @@ fn wetland_puddle_at(x: i32, z: i32) -> bool {
     wetland_wet_zone(x, z) && wetland_puddle_noise(x, z)
 }
 
+// Frozen tiles may only place natural water on the master mask at its saved height.
+fn place_natural_water(editor: &mut WorldEditor, x: i32, z: i32, replace: &[Block]) -> bool {
+    if editor.tiler_owns_bathymetry() {
+        let Some(surface) = editor.master_water_surface(x, z) else {
+            return false;
+        };
+        editor.set_block_absolute(WATER, x, surface, z, Some(replace), None);
+    } else {
+        editor.set_block(WATER, x, 0, z, Some(replace), None);
+    }
+    true
+}
+
 // Water only over wetland ground; roads, buildings and existing water stay
 fn try_place_wetland_puddle(editor: &mut WorldEditor, x: i32, z: i32) -> bool {
     if editor.check_for_block(x, 0, z, Some(&[MUD, GRASS_BLOCK])) {
-        editor.set_block(WATER, x, 0, z, Some(&[MUD, GRASS_BLOCK]), None);
-        true
+        place_natural_water(editor, x, z, &[MUD, GRASS_BLOCK])
     } else {
         false
     }
@@ -945,6 +969,45 @@ mod water_label_tests {
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn coastal_natural_water_uses_master_mask_and_surface() {
+        for natural in ["water", "reef"] {
+            let (mut editor, args, bridges) = fixture();
+            editor.set_ground(std::sync::Arc::new(
+                crate::water_depth::tests::master_ground(16, 70.0, &[(2, 2), (5, 5)]),
+            ));
+            editor.set_external_tile(true);
+            generate_natural(
+                &mut editor,
+                &ProcessedElement::Way(ring(&[("natural", natural)])),
+                &args,
+                &FloodFillCache::new(),
+                &BuildingFootprintBitmap::new_empty(),
+                &bridges,
+            );
+            for (x, z) in [(2, 2), (5, 5)] {
+                assert_eq!(editor.get_block_absolute(x, 70, z), None, "{natural}");
+            }
+            assert_eq!(
+                editor.get_block_absolute(6, 70, 5),
+                Some(WATER),
+                "{natural}"
+            );
+        }
+    }
+
+    #[test]
+    fn coastal_wetland_puddle_rejects_dry_master_cell() {
+        let (mut editor, _, _) = fixture();
+        editor.set_ground(std::sync::Arc::new(
+            crate::water_depth::tests::master_ground(16, 70.0, &[(5, 5)]),
+        ));
+        editor.set_external_tile(true);
+        editor.set_block(MUD, 5, 0, 5, None, None);
+        assert!(!try_place_wetland_puddle(&mut editor, 5, 5));
+        assert_eq!(editor.get_block_absolute(5, 70, 5), Some(MUD));
     }
 
     fn assert_empty(editor: &WorldEditor) {
