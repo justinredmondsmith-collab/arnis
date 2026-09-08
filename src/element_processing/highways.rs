@@ -1092,7 +1092,8 @@ pub fn carve_highway_tunnel_interior(editor: &mut WorldEditor, tunnel_cells: &[H
                 if beyond_portal(&cell.faces, cx, cz) {
                     continue;
                 }
-                let surf = semirandom_surface(cx, cz, cell.palette);
+                let (pattern_x, pattern_z) = editor.master_coordinates(cx, cz);
+                let surf = semirandom_surface(pattern_x, pattern_z, cell.palette);
                 editor.set_block_absolute(surf, cx, cell.road_y, cz, Some(ROAD_WL), None);
             }
         }
@@ -1871,6 +1872,8 @@ fn generate_highways_internal(
                             for dz in -block_range..=block_range {
                                 let set_x: i32 = x + dx;
                                 let set_z: i32 = z + dz;
+                                let (pattern_x, pattern_z) =
+                                    editor.master_coordinates(set_x, set_z);
 
                                 // Per-cell Y. For wide roads this is the
                                 // perpendicular median at the cell's own
@@ -1906,9 +1909,9 @@ fn generate_highways_internal(
                                 // footway's single grey.
                                 if is_zebra_crossing {
                                     let on_stripe = if dir_horizontal {
-                                        set_x % 2 < 1
+                                        pattern_x % 2 < 1
                                     } else {
-                                        set_z % 2 < 1
+                                        pattern_z % 2 < 1
                                     };
                                     if on_stripe {
                                         // White bar. Whitelist the mix we
@@ -1935,7 +1938,11 @@ fn generate_highways_internal(
                                         }
                                     } else {
                                         // Non-bar cell: asphalt mix.
-                                        let bg = semirandom_surface(set_x, set_z, DEFAULT_ROAD_MIX);
+                                        let bg = semirandom_surface(
+                                            pattern_x,
+                                            pattern_z,
+                                            DEFAULT_ROAD_MIX,
+                                        );
                                         if use_absolute_y {
                                             editor.set_block_absolute(
                                                 bg, set_x, cell_y, set_z, None, None,
@@ -1956,7 +1963,7 @@ fn generate_highways_internal(
                                     // its doc comment for the overlap-handling
                                     // rationale.
                                     let effective_block =
-                                        semirandom_surface(set_x, set_z, block_types);
+                                        semirandom_surface(pattern_x, pattern_z, block_types);
                                     if use_absolute_y {
                                         editor.set_block_absolute(
                                             effective_block,
@@ -4221,6 +4228,150 @@ mod tests {
                 !collect_road_surface_coords(&elements, &editor, &bounds, 1.0).contains(50, 50)
             );
             assert!(!collect_carriageway_coords(&elements, &bounds, 1.0).contains(50, 50));
+        }
+    }
+}
+
+#[cfg(test)]
+mod master_pattern_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn translated_master_parser_clipping_preserves_road_dashes() {
+        use crate::coordinate_system::{geographic::LLBBox, transformation::CoordTransformer};
+        use crate::osm_parser::{parse_osm_data_with_frame, OsmData};
+        let bbox = LLBBox::from_str("40,-74,41,-73").unwrap();
+        let args = Args::parse_from(["arnis", "--mode", "geo-terrain"]);
+        let whole_bounds = XZBBox::rect_from_min_max(0, 0, 127, 127).unwrap();
+        let tile_bounds = XZBBox::rect_from_min_max(0, 0, 79, 79).unwrap();
+        for points in [
+            vec![(2, 50), (120, 50)],
+            vec![(2, 50), (60, 50), (120, 65)],
+            vec![(-128, 50), (120, 50)],
+        ] {
+            let mut raw: Vec<_> = points.iter().enumerate().map(|(i, &(x,z))| serde_json::json!({
+                "type":"node", "id":i+1, "lat":41.0-f64::from(z)/127.0, "lon":-74.0+f64::from(x)/127.0
+            })).collect();
+            raw.push(serde_json::json!({"type":"way", "id":77, "nodes":(1..=points.len()).collect::<Vec<_>>(), "tags":{"highway":"residential", "lanes":"2"}}));
+            let raw = serde_json::json!({"elements":raw});
+            let mut whole =
+                crate::world_editor::translated_pattern_test_editor(&whole_bounds, (0, 0));
+            let mut tile =
+                crate::world_editor::translated_pattern_test_editor(&tile_bounds, (48, 29));
+            for (editor, col, row, size) in [(&mut whole, 0, 0, 128), (&mut tile, 48, 29, 80)] {
+                let data: OsmData = serde_json::from_value(raw.clone()).unwrap();
+                let (frame, bounds) =
+                    CoordTransformer::for_master_slice(&bbox, 128, 128, col, row, size, size)
+                        .unwrap();
+                let (elements, _, _, _) = parse_osm_data_with_frame(data, bbox, 1.0, frame, bounds);
+                let outlines =
+                    crate::element_processing::bridge_styles::BridgeOutlineIndex::build(&[]);
+                let structures = BridgeStructureMap::build(&[], editor, &outlines);
+                let surface = BridgeSurfaceMap::build(&[], &structures, 1.0);
+                for element in elements {
+                    if let ProcessedElement::Way(way) = &element {
+                        let master_points: Vec<_> = way
+                            .nodes
+                            .iter()
+                            .map(|node| (node.x + col as i32, node.z + row as i32))
+                            .collect();
+                        let expected: Vec<_> = points.iter().map(|&(x, z)| (x.max(0), z)).collect();
+                        assert_eq!(
+                            master_points, expected,
+                            "whole-master geometry must be preserved"
+                        );
+                        assert!(
+                            master_points
+                                .iter()
+                                .all(|&(x, z)| (0..128).contains(&x) && (0..128).contains(&z)),
+                            "source endpoints must remain master-bounded"
+                        );
+                        generate_highways_internal(
+                            editor,
+                            &element,
+                            &args,
+                            &HighwayConnectivityMap::new(),
+                            &FloodFillCache::new(),
+                            &CoordinateBitmap::new_empty(),
+                            &structures,
+                            &surface,
+                            &TunnelPortalMap::default(),
+                            &CoordinateBitmap::new_empty(),
+                        );
+                    }
+                }
+            }
+            let mut painted = 0;
+            for x in 64..111 {
+                for z in 43..72 {
+                    let expected = whole.get_block_absolute(x, 70, z);
+                    painted += usize::from(expected == Some(WHITE_CONCRETE));
+                    assert_eq!(
+                        expected,
+                        tile.get_block_absolute(x - 48, 70, z - 29),
+                        "parser-clipped road differs at {x},70,{z}; points {points:?}"
+                    );
+                }
+            }
+            assert!(painted > 0);
+        }
+    }
+
+    #[test]
+    fn translated_master_road_surface_and_markings_match() {
+        let bounds = XZBBox::rect_from_min_max(0, 0, 79, 79).unwrap();
+        let args = Args::parse_from(["arnis", "--mode", "geo-terrain"]);
+        for (highway, extra) in [
+            ("residential", ("lanes", "4")),
+            ("footway", ("footway", "crossing")),
+        ] {
+            let mut whole = crate::world_editor::translated_pattern_test_editor(&bounds, (0, 0));
+            let mut tile = crate::world_editor::translated_pattern_test_editor(&bounds, (17, 29));
+            for (editor, offset) in [(&mut whole, (0, 0)), (&mut tile, (17, 29))] {
+                let mut way = crate::element_processing::building_test_support::rect_way(
+                    77,
+                    5,
+                    50,
+                    74,
+                    50,
+                    &[("highway", highway), extra, ("crossing", "marked")],
+                );
+                way.nodes.truncate(2);
+                for node in &mut way.nodes {
+                    node.x -= offset.0;
+                    node.z -= offset.1;
+                }
+                let outlines =
+                    crate::element_processing::bridge_styles::BridgeOutlineIndex::build(&[]);
+                let structures = BridgeStructureMap::build(&[], editor, &outlines);
+                let surface = BridgeSurfaceMap::build(&[], &structures, 1.0);
+                generate_highways_internal(
+                    editor,
+                    &ProcessedElement::Way(way),
+                    &args,
+                    &HighwayConnectivityMap::new(),
+                    &FloodFillCache::new(),
+                    &CoordinateBitmap::new_empty(),
+                    &structures,
+                    &surface,
+                    &TunnelPortalMap::default(),
+                    &CoordinateBitmap::new_empty(),
+                );
+            }
+            let mut painted = 0;
+            for x in 25..73 {
+                for z in 43..58 {
+                    let expected = whole.get_block_absolute(x, 70, z);
+                    painted += usize::from(expected == Some(WHITE_CONCRETE));
+                    assert_eq!(
+                        expected,
+                        tile.get_block_absolute(x - 17, 70, z - 29),
+                        "{highway} differs at {x},70,{z}"
+                    );
+                }
+            }
+            assert!(painted > 0, "fixture must exercise markings");
         }
     }
 }

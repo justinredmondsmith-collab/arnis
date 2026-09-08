@@ -1257,6 +1257,8 @@ impl BuildingStyle {
 /// Building configuration derived from OSM tags and args
 #[derive(Clone)]
 struct BuildingConfig {
+    /// Shared master offset for pattern decisions; placement stays tile-local.
+    pattern_origin: (i32, i32),
     /// True when the building starts at ground level (no min_height / min_level offset).
     /// When false, foundation pillars should not be generated.
     is_ground_level: bool,
@@ -1492,6 +1494,20 @@ fn pick_window_frame(
 }
 
 impl BuildingConfig {
+    fn pattern_coordinates(&self, x: i32, z: i32) -> (i32, i32) {
+        (x + self.pattern_origin.0, z + self.pattern_origin.1)
+    }
+
+    fn pattern_sum(&self, x: i32, z: i32) -> i32 {
+        let (x, z) = self.pattern_coordinates(x, z);
+        x + z
+    }
+
+    fn pattern_rng(&self, x: i32, z: i32, salt: u64) -> rand_chacha::ChaCha8Rng {
+        let (x, z) = self.pattern_coordinates(x, z);
+        coord_rng(x, z, salt)
+    }
+
     /// Grammar anchor: +2 at ground level; elevated parts already carry the
     /// bonus in their min_level offset, keeping stacked bands in phase.
     #[inline]
@@ -1534,7 +1550,7 @@ impl BuildingConfig {
     /// Position within the 6-block window cycle (0-2 = window strip, 3-5 = wall pier).
     #[inline]
     fn window_col(&self, bx: i32, bz: i32) -> i32 {
-        (bx + bz + self.window_phase).rem_euclid(6)
+        (self.pattern_sum(bx, bz) + self.window_phase).rem_euclid(6)
     }
 
     /// Number of darker plinth rows at the wall base (2 from roughly three floors up).
@@ -2758,7 +2774,7 @@ fn generate_parking_building(
                         None,
                     );
                     editor.set_block(STONE_BRICK_SLAB, bx, current_level_y + 2, bz, None, None);
-                    if bx % 2 == 0 {
+                    if editor.master_coordinates(bx, bz).0 % 2 == 0 {
                         editor.set_block(COBBLESTONE_WALL, bx, current_level_y + 1, bz, None, None);
                     }
                 }
@@ -3493,7 +3509,7 @@ fn build_wall_ring(
 
                 // Construction: per-column variable wall height for a half-built look.
                 let column_top = if config.condition == BuildingCondition::Construction {
-                    let mut col_rng = coord_rng(bx, bz, config.element_id);
+                    let mut col_rng = config.pattern_rng(bx, bz, config.element_id);
                     let factor: f64 = 0.30 + col_rng.random::<f64>() * 0.55;
                     let local = config.start_y_offset
                         + ((config.building_height as f64) * factor).round() as i32;
@@ -3715,7 +3731,7 @@ fn apply_block_variety(chosen: Block, bx: i32, h: i32, bz: i32, config: &Buildin
                 let mut tt_mode_rng = element_rng(config.element_id ^ 0xC1A2_5544_99B7_3F02);
                 let secondary_mix = tt_mode_rng.random_bool(0.50);
                 if secondary_mix {
-                    let mut pos_rng = coord_rng(
+                    let mut pos_rng = config.pattern_rng(
                         bx,
                         bz,
                         config.element_id ^ 0x7E11_AABB_5DEF_3211 ^ ((h as u64) << 12),
@@ -3735,7 +3751,7 @@ fn apply_block_variety(chosen: Block, bx: i32, h: i32, bz: i32, config: &Buildin
         return chosen;
     }
 
-    let mut pos_rng = coord_rng(
+    let mut pos_rng = config.pattern_rng(
         bx,
         bz,
         config.element_id ^ 0x5050_3030_AAFF_BBCC ^ ((h as u64) << 12),
@@ -3960,7 +3976,7 @@ fn apply_condition_variation(
         return chosen;
     }
 
-    let mut rng = coord_rng(bx, bz, config.element_id ^ ((h as u64) << 16));
+    let mut rng = config.pattern_rng(bx, bz, config.element_id ^ ((h as u64) << 16));
     let is_window = chosen == config.window_block && config.has_windows;
 
     // Window-boarding rate for Disused/Abandoned (Ruined drops windows entirely).
@@ -4059,7 +4075,7 @@ fn determine_wall_block_at_position_pristine(
         // only in the middle two rows of each 4-row floor
         let is_slit = above_floor
             && (floor_row == 1 || floor_row == 2)
-            && (bx + bz + config.window_phase).rem_euclid(4) == 1;
+            && (config.pattern_sum(bx, bz) + config.window_phase).rem_euclid(4) == 1;
 
         if is_slit {
             config.window_block
@@ -4073,8 +4089,9 @@ fn determine_wall_block_at_position_pristine(
         }
     } else if config.category == BuildingCategory::GridSkyscraper {
         // Big glass panes separated by concrete mullions at floor lines and every 5th column.
-        let mullion =
-            !above_floor || floor_row == 0 || (bx + bz + config.window_phase).rem_euclid(5) == 0;
+        let mullion = !above_floor
+            || floor_row == 0
+            || (config.pattern_sum(bx, bz) + config.window_phase).rem_euclid(5) == 0;
         if mullion {
             config.wall_block
         } else {
@@ -4082,7 +4099,7 @@ fn determine_wall_block_at_position_pristine(
         }
     } else if config.is_tall_building && config.use_vertical_windows {
         // Tall building pattern, vertical window strips alternating with wall columns
-        if above_floor && (bx + bz + config.window_phase).rem_euclid(2) == 0 {
+        if above_floor && (config.pattern_sum(bx, bz) + config.window_phase).rem_euclid(2) == 0 {
             config.window_block
         } else {
             config.wall_block
@@ -4508,7 +4525,7 @@ fn generate_residential_window_decorations(
                             | WindowArchetype::ArchedTraditional
                     )
                 {
-                    let centre_sum = if mod6 == 3 { bx + bz - 2 } else { bx + bz + 2 };
+                    let centre_sum = config.pattern_sum(bx, bz) + if mod6 == 3 { -2 } else { 2 };
                     let shutter_roll =
                         coord_rng(centre_sum, centre_sum, element.id).random_range(0u32..100);
                     let shutter_max = match config.detail {
@@ -4559,9 +4576,9 @@ fn generate_residential_window_decorations(
 
                             // Shared roll seeded from the window centre.
                             let centre_sum = match mod6 {
-                                0 => bx + bz + 1,
-                                1 => bx + bz,
-                                _ => bx + bz - 1,
+                                0 => config.pattern_sum(bx, bz) + 1,
+                                1 => config.pattern_sum(bx, bz),
+                                _ => config.pattern_sum(bx, bz) - 1,
                             };
                             let decoration_roll = coord_rng(
                                 centre_sum.wrapping_add(floor_idx * 3),
@@ -4584,7 +4601,9 @@ fn generate_residential_window_decorations(
                                     BalconyBand::EveryBay => facade.is_street(bx, bz),
                                     BalconyBand::Alternating => {
                                         facade.is_street(bx, bz)
-                                            && (bx + bz + config.window_phase).div_euclid(6) % 2
+                                            && (config.pattern_sum(bx, bz) + config.window_phase)
+                                                .div_euclid(6)
+                                                % 2
                                                 == 0
                                     }
                                 };
@@ -4607,7 +4626,7 @@ fn generate_residential_window_decorations(
                                 );
 
                                 let mut pot_rng =
-                                    coord_rng(bx, bz.wrapping_add(floor_idx), element.id);
+                                    config.pattern_rng(bx, bz.wrapping_add(floor_idx), element.id);
                                 let (pot_centre, pot_side) =
                                     if is_rear { (35, 12) } else { (70, 25) };
                                 let pot_here = if mod6 == 1 {
@@ -4716,7 +4735,7 @@ fn generate_residential_window_decorations(
                                 }
 
                                 // Occasional furniture on the balcony floor
-                                let mut furn_rng = coord_rng(
+                                let mut furn_rng = config.pattern_rng(
                                     bx.wrapping_add(floor_idx * 11),
                                     bz.wrapping_add(floor_idx * 17),
                                     element.id,
@@ -5215,12 +5234,13 @@ fn generate_window_frames(
 
                         if col == 1 {
                             // One partitioned roll decides the centre dressing on the band.
-                            let roll = coord_rng(
-                                bx,
-                                bz.wrapping_add(h),
-                                config.element_id ^ 0x00F7_A3E0_D411_0001,
-                            )
-                            .random_range(0u32..100);
+                            let roll = config
+                                .pattern_rng(
+                                    bx,
+                                    bz.wrapping_add(h),
+                                    config.element_id ^ 0x00F7_A3E0_D411_0001,
+                                )
+                                .random_range(0u32..100);
                             let above = h + 1 + config.abs_terrain_offset;
                             let (t_lantern, t_pot, t_trapdoor) =
                                 if is_rear { (7, 16, 20) } else { (15, 32, 40) };
@@ -5237,8 +5257,11 @@ fn generate_window_frames(
                                         );
                                     }
                                 } else if roll < t_pot {
-                                    let mut pot_rng =
-                                        coord_rng(bx, bz.wrapping_add(h * 7), config.element_id);
+                                    let mut pot_rng = config.pattern_rng(
+                                        bx,
+                                        bz.wrapping_add(h * 7),
+                                        config.element_id,
+                                    );
                                     let pot = POTTED_PLANT_OPTIONS
                                         [pot_rng.random_range(0..POTTED_PLANT_OPTIONS.len())];
                                     editor.set_block_absolute(
@@ -5267,12 +5290,13 @@ fn generate_window_frames(
 
                             // Under-band corbel shelf under the sill of the window above.
                             if h - 1 > config.start_y_offset + 2 {
-                                let shelf_roll = coord_rng(
-                                    bx,
-                                    bz.wrapping_add(h * 3),
-                                    config.element_id ^ 0x0000_5E1F_0000_0002,
-                                )
-                                .random_range(0u32..100);
+                                let shelf_roll = config
+                                    .pattern_rng(
+                                        bx,
+                                        bz.wrapping_add(h * 3),
+                                        config.element_id ^ 0x0000_5E1F_0000_0002,
+                                    )
+                                    .random_range(0u32..100);
                                 if shelf_roll < 15 {
                                     editor.set_block_with_properties_absolute(
                                         make_closed_trapdoor(
@@ -5290,7 +5314,7 @@ fn generate_window_frames(
                             }
                         } else if let Some(button) = style.stud_button() {
                             // Button studs on the band front at the window edges.
-                            let centre = bx + bz + if col == 0 { 1 } else { -1 };
+                            let centre = config.pattern_sum(bx, bz) + if col == 0 { 1 } else { -1 };
                             let stud_roll = coord_rng(
                                 centre,
                                 centre.wrapping_add(h),
@@ -5320,7 +5344,8 @@ fn generate_window_frames(
                                 if config.floor_row(h) != 3 {
                                     continue;
                                 }
-                                let centre = bx + bz + if col == 0 { 1 } else { -1 };
+                                let centre =
+                                    config.pattern_sum(bx, bz) + if col == 0 { 1 } else { -1 };
                                 let roll = coord_rng(
                                     centre,
                                     centre.wrapping_add(h),
@@ -5973,7 +5998,7 @@ fn place_religious_buttress(
     let top_h = config.start_y_offset + config.building_height - height_reduction;
 
     // Buttress at every other window group center (mod6==0)
-    let window_group = ((bx + bz) / 6).rem_euclid(2);
+    let window_group = (config.pattern_sum(bx, bz) / 6).rem_euclid(2);
     if mod6 == 0 && window_group == 0 {
         let buttress_cutoff = config.start_y_offset + (config.building_height * 3 / 5);
 
@@ -6326,14 +6351,19 @@ fn generate_floors_and_ceilings(
                     continue;
                 }
 
-                let block = if x % 3 == 0 && z % 3 == 0 {
+                let block = if config.pattern_coordinates(x, z).0 % 3 == 0
+                    && config.pattern_coordinates(x, z).1 % 3 == 0
+                {
                     ceiling_light_block
                 } else {
                     config.floor_block
                 };
                 editor.set_block_absolute(block, x, h + config.abs_terrain_offset, z, None, None);
             }
-        } else if x % 3 == 0 && z % 3 == 0 && !is_passage {
+        } else if config.pattern_coordinates(x, z).0 % 3 == 0
+            && config.pattern_coordinates(x, z).1 % 3 == 0
+            && !is_passage
+        {
             // Single floor building with ceiling light (skip in passage)
             editor.set_block_absolute(
                 ceiling_light_block,
@@ -6856,6 +6886,7 @@ pub fn generate_buildings(
 
     // Create config struct for cleaner function calls
     let config = BuildingConfig {
+        pattern_origin: editor.master_coordinates(0, 0),
         is_ground_level: min_level_offset == 0,
         building_height: effective_building_height,
         floor_cycle,
@@ -7760,7 +7791,9 @@ fn generate_inset_tiers(
                 for h in 0..tier.height {
                     let gy = current_base + h;
                     if config.floor_row(gy) == 0 {
-                        let block = if x % 3 == 0 && z % 3 == 0 {
+                        let block = if config.pattern_coordinates(x, z).0 % 3 == 0
+                            && config.pattern_coordinates(x, z).1 % 3 == 0
+                        {
                             GLOWSTONE
                         } else {
                             config.floor_block
@@ -8115,7 +8148,8 @@ fn generate_roof_terrace(
     // This avoids RNG ordering issues and is fully deterministic per-position.
     for &(x, z) in &interior {
         // Deterministic per-position decision using coord_rng
-        let mut rng = coord_rng(x, z, element.id);
+        let (pattern_x, pattern_z) = editor.master_coordinates(x, z);
+        let mut rng = coord_rng(pattern_x, pattern_z, element.id);
         let roll: u32 = rng.random_range(0..100);
 
         // ~85% of interior tiles are empty (open terrace space)
@@ -8371,7 +8405,8 @@ fn generate_rooftop_equipment(
             continue;
         }
 
-        let mut rng = coord_rng(x, z, element.id ^ 0xE90B_375E_ED00_1001);
+        let (pattern_x, pattern_z) = editor.master_coordinates(x, z);
+        let mut rng = coord_rng(pattern_x, pattern_z, element.id ^ 0xE90B_375E_ED00_1001);
         let roll: u32 = rng.random_range(0..1200);
 
         // ~99% of tiles are empty, very sparse
@@ -10858,7 +10893,11 @@ mod height_tests {
 
     #[test]
     fn relation_levels_apply_without_height_tag() {
-        let way = way_with_tags(&[]);
+        let way = ProcessedWay {
+            id: 1,
+            tags: HashMap::new(),
+            nodes: Vec::new(),
+        };
         let (h, _) = calculate_building_height(&way, "yes", 0, 1.0, Some(5), 3, 100, 1);
         assert_eq!(h, 17); // 5 levels * 3 + 2
     }
@@ -11236,8 +11275,78 @@ mod style_tests {
         }
     }
 
+    #[test]
+    fn translated_master_facade_patterns_match() {
+        let whole = test_config(22, false, false);
+        let mut tile = whole.clone();
+        tile.pattern_origin = (17, 29);
+        for category in [
+            BuildingCategory::House,
+            BuildingCategory::Tower,
+            BuildingCategory::GridSkyscraper,
+        ] {
+            let mut whole = whole.clone();
+            whole.category = category;
+            tile.category = category;
+            for x in 20..45 {
+                for z in 30..40 {
+                    for y in 1..22 {
+                        assert_eq!(
+                            determine_wall_block_at_position(
+                                x,
+                                y,
+                                z,
+                                &whole,
+                                ColumnFacade::default()
+                            ),
+                            determine_wall_block_at_position(
+                                x - 17,
+                                y,
+                                z - 29,
+                                &tile,
+                                ColumnFacade::default()
+                            ),
+                            "facade differs at {x},{y},{z} category {category:?}",
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn translated_master_rooftop_equipment_matches() {
+        let bounds =
+            crate::coordinate_system::cartesian::XZBBox::rect_from_min_max(0, 0, 79, 79).unwrap();
+        let mut whole = crate::world_editor::translated_pattern_test_editor(&bounds, (0, 0));
+        let mut tile = crate::world_editor::translated_pattern_test_editor(&bounds, (17, 29));
+        let area: Vec<_> = (20..65)
+            .flat_map(|x| (32..72).map(move |z| (x, z)))
+            .collect();
+        let shifted: Vec<_> = area.iter().map(|&(x, z)| (x - 17, z - 29)).collect();
+        let way = ProcessedWay {
+            id: 1,
+            tags: HashMap::new(),
+            nodes: Vec::new(),
+        };
+        generate_rooftop_equipment(&mut whole, &way, &area, 20, 0, None);
+        generate_rooftop_equipment(&mut tile, &way, &shifted, 20, 0, None);
+        for x in 18..70 {
+            for z in 30..76 {
+                for y in 20..30 {
+                    assert_eq!(
+                        whole.get_block_absolute(x, y, z),
+                        tile.get_block_absolute(x - 17, y, z - 29),
+                        "roof differs at {x},{y},{z}"
+                    );
+                }
+            }
+        }
+    }
+
     fn test_config(height: i32, attic: bool, top: bool) -> BuildingConfig {
         BuildingConfig {
+            pattern_origin: (0, 0),
             is_ground_level: true,
             building_height: height,
             floor_cycle: 4,

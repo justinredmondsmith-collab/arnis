@@ -1,0 +1,75 @@
+{
+  "base_commit": "55b3900f683f4bf061add2353aed8c2dc2e4cf80",
+  "patch_path": "/tmp/arnis-v31-master-patterns-parser-final.patch",
+  "patch_sha256": "b5062d1083dfebece4b3fe85aafd6568c0d3392f3ac52afeccab8518bf9654e2",
+  "files": {
+    "docs/qualification/master-patterns.md": "ca6850df4b3da90514356113946bee66cc3555c7430afdc9035923765d6e8231",
+    "src/coordinate_system/transformation.rs": "9338b7f58c8a28ae808432b2cdf8abea8acf78b607b047f74db7ee258df6ab45",
+    "src/element_processing/buildings.rs": "ac106f0379319aa76e0fa61781ae53a03cb02bc6f12a72125abcedb40ddce0b8",
+    "src/element_processing/highways.rs": "aeabd9b94926557310951ae033fbdb5a2f23666715a6f53b63b547b1c6090e8d",
+    "src/element_processing/tree.rs": "4ee64f44a3e89d99912fe2027a71e47f14a922c287cc1b5cef3961fdee24917e",
+    "src/osm_parser.rs": "fe9a6b103f62070794b4796e0b1f45615734587009724efc461312bfa4feb216",
+    "src/world_editor/mod.rs": "c048ab6568ced96276607060ead39b1fdc2bc850821d87b613880a6211caad13"
+  },
+  "binary_path": "/tmp/arnis-v31-master-patterns-parser-candidate/arnis",
+  "binary_sha256": "2f598143539fb4fad1f9295cfe11a14e573ae827bc0e31fc1fb49d5acab83554",
+  "verification": {
+    "full_headless_suite": "719 passed, 6 ignored",
+    "parser_render_regression": "RED then GREEN: straight, bent, master-external source endpoint; original master geometry and bound asserted",
+    "format": "passed",
+    "diff_check": "passed",
+    "clippy": "passed; existing headless warnings only",
+    "locked_headless_release": "passed"
+  },
+  "qualification_results": [
+    {
+      "scene": "built",
+      "core_blocks": 2048,
+      "binary_sha256": "2f598143539fb4fad1f9295cfe11a14e573ae827bc0e31fc1fb49d5acab83554",
+      "profile_sha256": "02e80bc12bdc17483b94031ca1f78a842371226c8f997909f8fded5adfe2f81b",
+      "source_manifest_sha256": "6bd0832ecfc63c4ac5bd1d03b6ab29c8c9b0894a20bc5f2135ebcd2b8e81e02d",
+      "grid_sha256": "a911b51f30af8c317abf208134aefa8e8cb1a07de044195f95a57373141734fc",
+      "assembled_sha256": "63b5f86264e80a3d941879a449467bfbd203457749a86b499358faf42fd1f3b8",
+      "reference_sha256": "63b5f86264e80a3d941879a449467bfbd203457749a86b499358faf42fd1f3b8",
+      "equal": true,
+      "production_admitted": false
+    },
+    {
+      "scene": "built",
+      "core_blocks": 64,
+      "binary_sha256": "2f598143539fb4fad1f9295cfe11a14e573ae827bc0e31fc1fb49d5acab83554",
+      "profile_sha256": "02e80bc12bdc17483b94031ca1f78a842371226c8f997909f8fded5adfe2f81b",
+      "source_manifest_sha256": "6bd0832ecfc63c4ac5bd1d03b6ab29c8c9b0894a20bc5f2135ebcd2b8e81e02d",
+      "grid_sha256": "a911b51f30af8c317abf208134aefa8e8cb1a07de044195f95a57373141734fc",
+      "assembled_sha256": "63b5f86264e80a3d941879a449467bfbd203457749a86b499358faf42fd1f3b8",
+      "reference_sha256": "63b5f86264e80a3d941879a449467bfbd203457749a86b499358faf42fd1f3b8",
+      "equal": true,
+      "production_admitted": false
+    },
+    {
+      "scene": "water_vegetation",
+      "core_blocks": 2048,
+      "binary_sha256": "2f598143539fb4fad1f9295cfe11a14e573ae827bc0e31fc1fb49d5acab83554",
+      "profile_sha256": "02e80bc12bdc17483b94031ca1f78a842371226c8f997909f8fded5adfe2f81b",
+      "source_manifest_sha256": "2619d49987568954ef0f9e43d83d2718e2256fd6aa48904fe1f7e41de8cb7acc",
+      "grid_sha256": "ef9c47acaccf0d60a05b1d60ea9c66c676dbef40b842d1250b1c90df4ace2d04",
+      "assembled_sha256": "6fd01fa503efcbd068be59c9a3448068ebaf2eb77eb3216d66bd947b1359fed8",
+      "reference_sha256": "6fd01fa503efcbd068be59c9a3448068ebaf2eb77eb3216d66bd947b1359fed8",
+      "equal": true,
+      "production_admitted": false
+    },
+    {
+      "scene": "water_vegetation",
+      "core_blocks": 64,
+      "binary_sha256": "2f598143539fb4fad1f9295cfe11a14e573ae827bc0e31fc1fb49d5acab83554",
+      "profile_sha256": "02e80bc12bdc17483b94031ca1f78a842371226c8f997909f8fded5adfe2f81b",
+      "source_manifest_sha256": "2619d49987568954ef0f9e43d83d2718e2256fd6aa48904fe1f7e41de8cb7acc",
+      "grid_sha256": "ef9c47acaccf0d60a05b1d60ea9c66c676dbef40b842d1250b1c90df4ace2d04",
+      "assembled_sha256": "f4ba65a555be7a01d8ff1f923a12b386e311b270368d531ef9d37439e94437d2",
+      "reference_sha256": "6fd01fa503efcbd068be59c9a3448068ebaf2eb77eb3216d66bd947b1359fed8",
+      "equal": false,
+      "production_admitted": false
+    }
+  ],
+  "delivery_note": "Production and test files match the tested uncommitted patch byte for byte. The delivery adds documentation and evidence only. The binary was built before the delivery commit; no claim that a rebuild of the delivery commit is byte-identical."
+}

@@ -402,7 +402,8 @@ impl LeafPlacer<'_> {
         if self.blocked(x, y, z) {
             return;
         }
-        let h = leaf_hash(x, y, z);
+        let (pattern_x, pattern_z) = editor.master_coordinates(x, z);
+        let h = leaf_hash(pattern_x, y, pattern_z);
         if leaf_gap_at(h) {
             return;
         }
@@ -485,7 +486,8 @@ impl Tree {
         building_footprints: Option<&BuildingFootprintBitmap>,
         bridge_surface: Option<&BridgeSurfaceMap>,
     ) {
-        let tree_type = Self::random_type(x, z);
+        let (pattern_x, pattern_z) = editor.master_coordinates(x, z);
+        let tree_type = Self::random_type(pattern_x, pattern_z);
         Self::build(
             editor,
             (x, y, z),
@@ -505,7 +507,8 @@ impl Tree {
         building_footprints: Option<&BuildingFootprintBitmap>,
         bridge_surface: Option<&BridgeSurfaceMap>,
     ) {
-        let tree_type = Self::random_type(x, z);
+        let (pattern_x, pattern_z) = editor.master_coordinates(x, z);
+        let tree_type = Self::random_type(pattern_x, pattern_z);
         Self::build(
             editor,
             (x, y, z),
@@ -585,7 +588,8 @@ impl Tree {
         blacklist.push(WATER);
 
         // Salt 1 keeps the shape RNG independent of the type-pick RNG.
-        let mut shape_rng = coord_rng(x, z, 1);
+        let (pattern_x, pattern_z) = editor.master_coordinates(x, z);
+        let mut shape_rng = coord_rng(pattern_x, pattern_z, 1);
         let variant_idx: u32 = shape_rng.random();
 
         let tree = Self::get_tree(tree_type, variant_idx);
@@ -1629,5 +1633,43 @@ mod scale_tests {
             a <= b && b <= c,
             "height must grow with scale: {a} <= {b} <= {c}"
         );
+    }
+}
+
+#[cfg(test)]
+mod master_pattern_tests {
+    use super::*;
+    #[test]
+    fn translated_master_tree_blocks_match() {
+        for species in [
+            None,
+            Some(TreeType::Oak),
+            Some(TreeType::Spruce),
+            Some(TreeType::FloweringOak),
+        ] {
+            let bounds =
+                crate::coordinate_system::cartesian::XZBBox::rect_from_min_max(0, 0, 79, 79)
+                    .unwrap();
+            let mut whole = crate::world_editor::translated_pattern_test_editor(&bounds, (0, 0));
+            let mut tile = crate::world_editor::translated_pattern_test_editor(&bounds, (17, 29));
+            if let Some(species) = species {
+                Tree::create_of_type(&mut whole, (40, 0, 50), species, None, None, false);
+                Tree::create_of_type(&mut tile, (23, 0, 21), species, None, None, false);
+            } else {
+                Tree::create(&mut whole, (40, 0, 50), None, None);
+                Tree::create(&mut tile, (23, 0, 21), None, None);
+            }
+            for x in 30..51 {
+                for z in 40..61 {
+                    for y in 65..100 {
+                        assert_eq!(
+                            whole.get_block_absolute(x, y, z),
+                            tile.get_block_absolute(x - 17, y, z - 29),
+                            "tree differs at {x},{y},{z}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }
