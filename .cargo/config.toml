@@ -1,0 +1,4 @@
+[env]
+# Fixed timestamp for the v3.1 development RC build, established at coastal source
+# commit 940a587. Native dependencies otherwise embed the wall-clock build time.
+SOURCE_DATE_EPOCH = "1788828777"
