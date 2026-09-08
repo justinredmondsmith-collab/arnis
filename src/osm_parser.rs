@@ -967,10 +967,38 @@ fn parse_osm_data_inner(
             continue;
         }
 
+        // Keep highway segment starts shared across master slices: tile-local
+        // clipping would restart dash counters at each newly clipped endpoint.
+        // Selection still uses the tile bbox above. Rendering nodes are clipped
+        // to the admitted master (at most 16,384 samples per segment axis), not
+        // retained from an arbitrarily long source way. Clip before translation
+        // so intersection rounding is identical to the whole-master render.
+        let nodes = if way.tags.contains_key("highway")
+            && way.tags.get("area").map(String::as_str) != Some("yes")
+        {
+            if let Some((master_bounds, (col, row))) = coord_transformer.master_bounds_and_offset()
+            {
+                let mut master_nodes = way.nodes.clone();
+                for node in &mut master_nodes {
+                    node.x += col;
+                    node.z += row;
+                }
+                let mut master_nodes = clip_way_to_bbox(&master_nodes, &master_bounds);
+                for node in &mut master_nodes {
+                    node.x -= col;
+                    node.z -= row;
+                }
+                master_nodes
+            } else {
+                clipped_nodes
+            }
+        } else {
+            clipped_nodes
+        };
         let processed: ProcessedWay = ProcessedWay {
             id: element.id,
             tags: way.tags.clone(),
-            nodes: clipped_nodes,
+            nodes,
         };
 
         processed_elements.push(ProcessedElement::Way(processed));

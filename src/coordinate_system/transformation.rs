@@ -578,6 +578,25 @@ mod tiler_frame_tests {
 }
 
 impl CoordTransformer {
+    /// The bounded shared frame and the integer translation into this tile.
+    /// Stock local and Mercator transforms have no external master frame.
+    pub(crate) fn master_bounds_and_offset(&self) -> Option<(XZBBox, (i32, i32))> {
+        match &self.mode {
+            ProjectionMode::MasterGrid {
+                last_column,
+                last_row,
+                column_offset,
+                row_offset,
+                ..
+            } => Some((
+                XZBBox::rect_from_min_max(0, 0, *last_column as i32, *last_row as i32)
+                    .expect("validated master dimensions"),
+                (*column_offset, *row_offset),
+            )),
+            _ => None,
+        }
+    }
+
     /// Construct a tile using the master's geographic frame and quantization.
     /// The bounds and scale getters describe the tile; geographic points are
     /// quantized as master samples and then translated by integer offsets.

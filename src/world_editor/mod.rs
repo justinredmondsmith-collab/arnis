@@ -2300,6 +2300,43 @@ fn single_item(id: &str, slot: i8, count: i8) -> HashMap<String, Value> {
 }
 
 #[cfg(test)]
+pub(crate) fn translated_pattern_test_editor(
+    bounds: &XZBBox,
+    offset: (u32, u32),
+) -> WorldEditor<'_> {
+    use crate::elevation::master_grid;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("master");
+    let mut grid = master_grid::tests::fixture();
+    grid.metadata.width = 128;
+    grid.metadata.height = 128;
+    grid.metadata.world_width = 128;
+    grid.metadata.world_height = 128;
+    grid.metadata.payload_bytes = 128 * 128 * 10;
+    grid.elevation = vec![70.0; 128 * 128];
+    grid.land_cover = vec![10; 128 * 128];
+    grid.water_distance = vec![15; 128 * 128];
+    grid.water_blend = vec![0.0; 128 * 128];
+    master_grid::save(&path, &grid).unwrap();
+    let ground = Ground::from_master_slice(
+        master_grid::load_slice(
+            &path,
+            offset.0,
+            offset.1,
+            (bounds.max_x() + 1) as u32,
+            (bounds.max_z() + 1) as u32,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let ll = crate::coordinate_system::geographic::LLBBox::from_str("24,45,24.01,45.01").unwrap();
+    let mut editor = WorldEditor::new("/dev/null/unused".into(), bounds, ll);
+    editor.set_ground(std::sync::Arc::new(ground));
+    editor.set_external_tile(true);
+    editor
+}
+
+#[cfg(test)]
 mod eviction_guard_tests {
     use super::*;
     use crate::coordinate_system::cartesian::XZBBox;
