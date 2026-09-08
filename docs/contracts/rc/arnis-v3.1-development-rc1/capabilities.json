@@ -1,0 +1,77 @@
+{
+  "build": {
+    "commit": "a3d39ca44a78a6539cc920f5f4b029818859cc21",
+    "dirty": false,
+    "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+    "target": "x86_64-unknown-linux-gnu"
+  },
+  "capabilities": [],
+  "contract": "arnis-tiler/v3.1/1",
+  "coordinates": {
+    "bbox_order": "south,west,north,east",
+    "cell_to_block": "one-to-one",
+    "origin": "northwest",
+    "projection": "local",
+    "slice": "integer-half-open",
+    "x_direction": "east",
+    "z_direction": "south"
+  },
+  "exit_codes": {
+    "incompatible": 3,
+    "io_or_generation": 1,
+    "malformed": 2,
+    "success": 0
+  },
+  "grid": {
+    "bands": [
+      "elevation-f32",
+      "land-cover-u8",
+      "water-distance-u8",
+      "water-blend-f32"
+    ],
+    "endian": "little",
+    "format": "ARNTGRID2",
+    "height_units": "minecraft_y",
+    "integrity": "sha256",
+    "metadata_max_bytes": 1048576,
+    "provider_max_axis": 16384,
+    "provider_max_cells": 268435456,
+    "scalar": "f32"
+  },
+  "java": {
+    "data_version": 3955,
+    "minecraft_version": "1.21.1"
+  },
+  "ore_policy": "no-ores-skips-all-fillground-veins",
+  "profile": "nyc-conservative-v1",
+  "railways": {
+    "domains": [
+      "track",
+      "bridge",
+      "tunnel_shell",
+      "tunnel_carve",
+      "power_line"
+    ],
+    "values": [
+      "all",
+      "rail",
+      "subway",
+      "tram",
+      "light_rail",
+      "narrow_gauge",
+      "monorail",
+      "funicular",
+      "preserved",
+      "disused",
+      "abandoned",
+      "construction",
+      "miniature"
+    ]
+  },
+  "schema_version": 1,
+  "tile_metadata": "no-maps-signage-branding-or-global-settings",
+  "upstream": {
+    "commit": "3918513acb4e5e9ef4332418531a7c444d2b5acf",
+    "version": "3.1.0"
+  }
+}
