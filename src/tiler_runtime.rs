@@ -145,6 +145,7 @@ pub(crate) fn run(
     let bbox = args.bbox.expect("validated bbox");
     let output = args.path.as_ref().expect("validated path");
     let sources = admit_sources(&request.source_manifest)?;
+    crate::climate::verify_frozen_asset(&sources).map_err(io_error)?;
     if let Action::Export { destination } = &request.action {
         validate_export_destination(destination, &request.source_manifest, &sources)?;
     }
@@ -303,7 +304,8 @@ pub(crate) fn run(
                 let (elements, bounds, _, _) = crate::osm_parser::parse_osm_data_with_frame(
                     osm, bbox, args.scale, frame, bounds,
                 );
-                let mut ground = crate::ground::generate_ground_data(&args, bbox);
+                let mut ground = crate::ground::generate_ground_data_frozen(&args, bbox, &sources)
+                    .map_err(io_error)?;
                 ground.apply_osm_water_override(&elements, &bounds);
                 ground.apply_osm_land_override(&elements, &bounds, args.scale);
                 ground.apply_bridge_land_cover_repair(&elements, &bounds, args.scale);
@@ -376,7 +378,12 @@ mod ingress_tests {
         let root = tempfile::tempdir().unwrap();
         let osm = br#"{"elements":[]}"#;
         std::fs::write(root.path().join("osm.json"), osm).unwrap();
-        let manifest = serde_json::to_vec(&serde_json::json!({"schema_version":1,"profile_sha256":profile_hash(),"entries":[{"kind":"osm","key":"master-osm","path":"osm.json","sha256":format!("{:x}",Sha256::digest(osm)),"size_bytes":osm.len()}]})).unwrap();
+        let climate = include_bytes!("../assets/climate/koppen_0p1.bin");
+        std::fs::write(root.path().join("climate.bin"), climate).unwrap();
+        let manifest = serde_json::to_vec(&serde_json::json!({"schema_version":1,"profile_sha256":profile_hash(),"entries":[
+            {"kind":"osm","key":"master-osm","path":"osm.json","sha256":format!("{:x}",Sha256::digest(osm)),"size_bytes":osm.len()},
+            {"kind":"climate","key":"koppen_0p1.bin","path":"climate.bin","sha256":format!("{:x}",Sha256::digest(climate)),"size_bytes":climate.len()}
+        ]})).unwrap();
         let manifest_path = root.path().join("sources.json");
         std::fs::write(&manifest_path, &manifest).unwrap();
         let mut grid = master_grid::tests::fixture();

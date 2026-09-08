@@ -13,6 +13,16 @@ const KOPPEN_COLS: usize = 3600;
 const KOPPEN_ROWS: usize = 1800;
 const KOPPEN_RES: f64 = 0.1;
 
+pub(crate) fn verify_frozen_asset(
+    sources: &crate::tiler_contract::AdmittedSources,
+) -> Result<(), String> {
+    let bytes = sources.resolve("climate", "koppen_0p1.bin", KOPPEN.len() as u64)?;
+    if bytes != KOPPEN {
+        return Err("Frozen climate source differs from compiled koppen_0p1.bin".into());
+    }
+    Ok(())
+}
+
 fn koppen_class(lat: f64, lon: f64) -> u8 {
     if KOPPEN.len() != KOPPEN_COLS * KOPPEN_ROWS {
         return 0;
@@ -188,5 +198,22 @@ mod tests {
             let bbox = LLBBox::from_str(bb).unwrap();
             assert_eq!(Climate::classify(&bbox), want, "bbox {bb}");
         }
+    }
+}
+
+#[cfg(test)]
+mod frozen_tests {
+    use super::*;
+    #[test]
+    fn frozen_climate_requires_exact_compiled_asset() {
+        let (_dir, sources) =
+            crate::tiler_contract::frozen_tests::fixture("climate", "koppen_0p1.bin", KOPPEN);
+        verify_frozen_asset(&sources).unwrap();
+        let (_dir, wrong) =
+            crate::tiler_contract::frozen_tests::fixture("climate", "koppen_0p1.bin", b"other");
+        assert!(verify_frozen_asset(&wrong).is_err());
+        let (_dir, missing) =
+            crate::tiler_contract::frozen_tests::fixture("climate", "wrong-key", KOPPEN);
+        assert!(verify_frozen_asset(&missing).is_err());
     }
 }

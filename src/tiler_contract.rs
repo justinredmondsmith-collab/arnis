@@ -395,6 +395,40 @@ pub(crate) struct AdmittedSources {
     pub entries: Vec<SourceEntry>,
 }
 
+impl AdmittedSources {
+    /// Read only a bounded response, then authenticate the exact buffer consumed.
+    pub(crate) fn resolve(&self, kind: &str, key: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
+        use sha2::{Digest, Sha256};
+        use std::io::Read;
+        let entry = self
+            .entries
+            .iter()
+            .find(|e| e.kind == kind && e.key == key)
+            .ok_or_else(|| format!("Unlisted frozen source {kind}:{key}"))?;
+        if entry.size_bytes > max_bytes || entry.size_bytes == u64::MAX {
+            return Err(format!(
+                "Frozen source exceeds response bound: {kind}:{key}"
+            ));
+        }
+        let file = std::fs::File::open(&entry.path).map_err(|e| e.to_string())?;
+        if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+            return Err("Frozen source is not a regular file".into());
+        }
+        let mut bytes = Vec::new();
+        file.take(entry.size_bytes + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() as u64 != entry.size_bytes
+            || format!("{:x}", Sha256::digest(&bytes)) != entry.sha256
+        {
+            return Err(format!(
+                "Frozen source size/checksum mismatch: {kind}:{key}"
+            ));
+        }
+        Ok(bytes)
+    }
+}
+
 pub(crate) fn profile_hash() -> String {
     use sha2::{Digest, Sha256};
     // This profile is a flat JSON object; BTreeMap explicitly fixes key ordering
@@ -511,4 +545,52 @@ pub(crate) fn admit_sources(path: &std::path::Path) -> Result<AdmittedSources, C
         sha256: format!("{:x}", Sha256::digest(&bytes)),
         entries: manifest.entries,
     })
+}
+
+#[cfg(test)]
+pub(crate) mod frozen_tests {
+    use super::*;
+    pub(crate) fn fixture(
+        kind: &str,
+        key: &str,
+        bytes: &[u8],
+    ) -> (tempfile::TempDir, AdmittedSources) {
+        use sha2::{Digest, Sha256};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source");
+        std::fs::write(&path, bytes).unwrap();
+        let manifest = dir.path().join("manifest.json");
+        std::fs::write(
+            &manifest,
+            serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1, "profile_sha256": profile_hash(), "entries": [{
+                    "kind": kind, "key": key, "path": "source",
+                    "sha256": format!("{:x}", Sha256::digest(bytes)), "size_bytes": bytes.len()
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let sources = admit_sources(&manifest).unwrap();
+        (dir, sources)
+    }
+    #[test]
+    fn frozen_returns_exact_verified_bytes_and_rechecks_mutation() {
+        let (_dir, sources) = fixture("elevation", "aws:15:1:2", b"original");
+        assert_eq!(
+            sources.resolve("elevation", "aws:15:1:2", 8).unwrap(),
+            b"original"
+        );
+        std::fs::write(&sources.entries[0].path, b"modified").unwrap();
+        assert!(sources.resolve("elevation", "aws:15:1:2", 8).is_err());
+    }
+    #[test]
+    fn frozen_rejects_missing_wrong_kind_oversize_and_growing_files() {
+        let (_dir, sources) = fixture("land_cover", "url#bytes=0-7", b"original");
+        assert!(sources.resolve("land_cover", "url#bytes=0-8", 9).is_err());
+        assert!(sources.resolve("elevation", "url#bytes=0-7", 8).is_err());
+        assert!(sources.resolve("land_cover", "url#bytes=0-7", 7).is_err());
+        std::fs::write(&sources.entries[0].path, b"original-extra").unwrap();
+        assert!(sources.resolve("land_cover", "url#bytes=0-7", 8).is_err());
+    }
 }

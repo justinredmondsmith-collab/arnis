@@ -51,43 +51,78 @@ impl ElevationProvider for AwsTerrain {
         grid_width: usize,
         grid_height: usize,
     ) -> Result<RawElevationGrid, Box<dyn std::error::Error>> {
+        self.fetch_raw_with_sources(bbox, grid_width, grid_height, None)
+    }
+}
+impl AwsTerrain {
+    pub(crate) fn fetch_raw_frozen(
+        &self,
+        bbox: &LLBBox,
+        grid_width: usize,
+        grid_height: usize,
+        sources: &crate::tiler_contract::AdmittedSources,
+    ) -> Result<RawElevationGrid, Box<dyn std::error::Error>> {
+        self.fetch_raw_with_sources(bbox, grid_width, grid_height, Some(sources))
+    }
+    fn fetch_raw_with_sources(
+        &self,
+        bbox: &LLBBox,
+        grid_width: usize,
+        grid_height: usize,
+        sources: Option<&crate::tiler_contract::AdmittedSources>,
+    ) -> Result<RawElevationGrid, Box<dyn std::error::Error>> {
         let zoom: u8 = calculate_zoom_level(bbox);
-        let tiles: Vec<(u32, u32)> = get_tile_coordinates(bbox, zoom);
+        let tiles: Vec<(u32, u32)> = if sources.is_some() {
+            frozen_tile_coordinates(bbox, zoom, grid_width, grid_height)?
+        } else {
+            get_tile_coordinates(bbox, zoom)
+        };
 
-        let tile_cache_dir = get_cache_dir(self.name());
-        if !tile_cache_dir.exists() {
-            std::fs::create_dir_all(&tile_cache_dir)?;
-        }
+        let downloaded_tiles: Vec<TileDownloadResult> = if let Some(sources) = sources {
+            tiles
+                .iter()
+                .map(|&(x, y)| load_frozen_tile(sources, x, y, zoom).map(|img| ((x, y), img)))
+                .collect()
+        } else {
+            let tile_cache_dir = get_cache_dir(self.name());
+            if !tile_cache_dir.exists() {
+                std::fs::create_dir_all(&tile_cache_dir)?;
+            }
 
-        let client = reqwest::blocking::Client::builder()
-            .user_agent(concat!(
-                "Arnis/",
-                env!("CARGO_PKG_VERSION"),
-                " (+https://github.com/louis-e/arnis)"
-            ))
-            .build()?;
+            let client = reqwest::blocking::Client::builder()
+                .user_agent(concat!(
+                    "Arnis/",
+                    env!("CARGO_PKG_VERSION"),
+                    " (+https://github.com/louis-e/arnis)"
+                ))
+                .build()?;
 
-        let num_tiles = tiles.len();
-        let concurrency = crate::tiler_runtime::provider_threads(MAX_CONCURRENT_DOWNLOADS);
-        println!(
+            let num_tiles = tiles.len();
+            let concurrency = crate::tiler_runtime::provider_threads(MAX_CONCURRENT_DOWNLOADS);
+            println!(
             "Downloading {num_tiles} elevation tiles from AWS (up to {concurrency} concurrent)..."
         );
 
-        let thread_pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(concurrency)
-            .build()
-            .map_err(|e| format!("Failed to create thread pool: {e}"))?;
+            let thread_pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(concurrency)
+                .build()
+                .map_err(|e| format!("Failed to create thread pool: {e}"))?;
 
-        let downloaded_tiles: Vec<TileDownloadResult> = thread_pool.install(|| {
-            tiles
-                .par_iter()
-                .map(|(tile_x, tile_y)| {
-                    let tile_path = tile_cache_dir.join(format!("z{zoom}_x{tile_x}_y{tile_y}.png"));
-                    let rgb_img = fetch_or_load_tile(&client, *tile_x, *tile_y, zoom, &tile_path)?;
-                    Ok(((*tile_x, *tile_y), rgb_img))
-                })
-                .collect()
-        });
+            let downloaded_tiles: Vec<TileDownloadResult> = thread_pool.install(|| {
+                tiles
+                    .par_iter()
+                    .map(|(tile_x, tile_y)| {
+                        let tile_path =
+                            tile_cache_dir.join(format!("z{zoom}_x{tile_x}_y{tile_y}.png"));
+                        let rgb_img =
+                            fetch_or_load_tile(&client, *tile_x, *tile_y, zoom, &tile_path)?;
+                        Ok(((*tile_x, *tile_y), rgb_img))
+                    })
+                    .collect()
+            });
+
+            downloaded_tiles
+        };
 
         // Collect tiles into a HashMap for random access during grid sampling
         let mut tile_map: std::collections::HashMap<(u32, u32), TileImage> =
@@ -98,6 +133,9 @@ impl ElevationProvider for AwsTerrain {
                     tile_map.insert(key, img);
                 }
                 Err(e) => {
+                    if sources.is_some() {
+                        return Err(e.into());
+                    }
                     eprintln!("Warning: Failed to download tile: {e}");
                 }
             }
@@ -169,6 +207,73 @@ impl ElevationProvider for AwsTerrain {
             heights_meters: height_grid,
         })
     }
+}
+
+/// Exact Cartesian footprint of the four pixels used for every grid sample.
+/// Reject world-edge samples that stock sampling would leave nonfinite.
+fn frozen_tile_coordinates(
+    bbox: &LLBBox,
+    zoom: u8,
+    width: usize,
+    height: usize,
+) -> Result<Vec<(u32, u32)>, String> {
+    use std::collections::BTreeSet;
+    let n = 2.0_f64.powi(zoom as i32);
+    let mut xs = BTreeSet::new();
+    let mut ys = BTreeSet::new();
+    let include = |pixel: f64, tiles: &mut BTreeSet<u32>| -> Result<(), String> {
+        let first = pixel.floor();
+        if !first.is_finite() || first < 0.0 || first + 1.0 >= n * 256.0 {
+            return Err("Frozen AWS interpolation exceeds world pixel bounds".into());
+        }
+        tiles.insert((first / 256.0).floor() as u32);
+        tiles.insert(((first + 1.0) / 256.0).floor() as u32);
+        Ok(())
+    };
+    for gx in 0..width {
+        let lng = bbox.min().lng()
+            + (gx as f64 / (width - 1).max(1) as f64) * (bbox.max().lng() - bbox.min().lng());
+        include((lng + 180.0) / 360.0 * n * 256.0, &mut xs)?;
+    }
+    for gy in 0..height {
+        let lat = bbox.max().lat()
+            - (gy as f64 / (height - 1).max(1) as f64) * (bbox.max().lat() - bbox.min().lat());
+        include(
+            (1.0 - lat.to_radians().tan().asinh() / std::f64::consts::PI) / 2.0 * n * 256.0,
+            &mut ys,
+        )?;
+    }
+    Ok(xs
+        .into_iter()
+        .flat_map(|x| ys.iter().map(move |&y| (x, y)))
+        .collect())
+}
+
+fn load_frozen_tile(
+    sources: &crate::tiler_contract::AdmittedSources,
+    x: u32,
+    y: u32,
+    zoom: u8,
+) -> Result<TileImage, String> {
+    let bytes = sources.resolve("elevation", &format!("aws:{zoom}:{x}:{y}"), 4 * 1024 * 1024)?;
+    let reader =
+        image::ImageReader::with_format(std::io::Cursor::new(&bytes), image::ImageFormat::Png);
+    let dimensions = reader.into_dimensions().map_err(|e| e.to_string())?;
+    if dimensions != (256, 256) {
+        return Err("Frozen Terrarium tile must be 256x256".into());
+    }
+    // Decode the same authenticated bytes; never reopen the source file.
+    let mut reader =
+        image::ImageReader::with_format(std::io::Cursor::new(bytes), image::ImageFormat::Png);
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(256);
+    limits.max_image_height = Some(256);
+    limits.max_alloc = Some(4 * 1024 * 1024);
+    reader.limits(limits);
+    reader
+        .decode()
+        .map(|img| img.to_rgb8())
+        .map_err(|e| e.to_string())
 }
 
 /// Sample a single pixel from the tile map, handling tile boundary crossover.
@@ -453,5 +558,82 @@ mod tests {
             .to_str()
             .unwrap()
             .contains("image"));
+    }
+}
+
+#[cfg(test)]
+mod frozen_tests {
+    use super::*;
+    #[test]
+    fn frozen_aws_requires_interpolation_neighbor() {
+        let boundary = 9650.0 * 360.0 / 32768.0 - 180.0;
+        let bbox =
+            LLBBox::new(40.7, boundary - 0.000001, 40.700001, boundary - 0.00000001).unwrap();
+        let zoom = calculate_zoom_level(&bbox);
+        assert_eq!(zoom, 15);
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            256,
+            256,
+            image::Rgb([128, 42, 0]),
+        ))
+        .write_to(&mut encoded, image::ImageFormat::Png)
+        .unwrap();
+        let (_dir, mut sources) =
+            crate::tiler_contract::frozen_tests::fixture("elevation", "unused", encoded.get_ref());
+        let entry = sources.entries.remove(0);
+        for (x, y) in get_tile_coordinates(&bbox, zoom) {
+            sources.entries.push(crate::tiler_contract::SourceEntry {
+                kind: "elevation".into(),
+                key: format!("aws:{zoom}:{x}:{y}"),
+                path: entry.path.clone(),
+                sha256: entry.sha256.clone(),
+                size_bytes: entry.size_bytes,
+            });
+        }
+        assert!(
+            AwsTerrain.fetch_raw_frozen(&bbox, 2, 2, &sources).is_err(),
+            "unlisted interpolation neighbor must fail"
+        );
+        for (x, y) in get_tile_coordinates(&bbox, zoom) {
+            sources.entries.push(crate::tiler_contract::SourceEntry {
+                kind: "elevation".into(),
+                key: format!("aws:{zoom}:{}:{y}", x + 1),
+                path: entry.path.clone(),
+                sha256: entry.sha256.clone(),
+                size_bytes: entry.size_bytes,
+            });
+        }
+        let grid = AwsTerrain.fetch_raw_frozen(&bbox, 2, 2, &sources).unwrap();
+        assert!(grid.heights_meters.iter().flatten().all(|&v| v == 42.0));
+    }
+    #[test]
+    fn frozen_aws_decodes_manifest_and_rejects_missing_or_invalid_tiles() {
+        let mut encoded = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            256,
+            256,
+            image::Rgb([128, 42, 0]),
+        ))
+        .write_to(&mut encoded, image::ImageFormat::Png)
+        .unwrap();
+        let (_dir, sources) = crate::tiler_contract::frozen_tests::fixture(
+            "elevation",
+            "aws:15:1:2",
+            encoded.get_ref(),
+        );
+        assert_eq!(
+            load_frozen_tile(&sources, 1, 2, 15)
+                .unwrap()
+                .get_pixel(0, 0)
+                .0,
+            [128, 42, 0]
+        );
+        assert!(load_frozen_tile(&sources, 2, 2, 15).is_err());
+        let (_dir, invalid) =
+            crate::tiler_contract::frozen_tests::fixture("elevation", "aws:15:1:2", b"invalid png");
+        assert!(load_frozen_tile(&invalid, 1, 2, 15).is_err());
+        let bbox = LLBBox::new(40.7, -74.0, 40.70001, -73.99999).unwrap();
+        assert!(AwsTerrain.fetch_raw_frozen(&bbox, 2, 2, &sources).is_err());
     }
 }
