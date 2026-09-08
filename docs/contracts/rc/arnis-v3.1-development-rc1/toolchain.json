@@ -1,0 +1,67 @@
+{
+  "compiler_support_libraries": [
+    {
+      "path": "/var/home/bazzite/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/lib/libLLVM-22-rust-1.97.0-stable.so",
+      "sha256": "483d455e9b254946552ac51e78ae374da9086c2e2a2d24518ad10357b528483f",
+      "size_bytes": 42
+    },
+    {
+      "path": "/var/home/bazzite/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/lib/libLLVM.so.22.1-rust-1.97.0-stable",
+      "sha256": "e0fb4933d61e8c27e45796a91a0774bcff8379d414b33f898b1a95b9a9c05fb2",
+      "size_bytes": 199473872
+    },
+    {
+      "path": "/var/home/bazzite/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/lib/librustc_driver-a39fc8bf9e61dbb9.so",
+      "sha256": "05db21ad99d7224822697fac743a53307a18fcdecc5f9241c7e4e3df0240cdfa",
+      "size_bytes": 157876992
+    },
+    {
+      "path": "/var/home/bazzite/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/libstd-ca8536218e109c03.rlib",
+      "sha256": "9016772eab08225b26bb23f143abfbae741426141a6dcee84fe044bb77423fd8",
+      "size_bytes": 11678274
+    }
+  ],
+  "linker_evidence": "Installed native/bundled linker versions recorded. Original final linker argv was not retained; selected linker is not independently proven by this inventory.",
+  "official_versioned_toolchain_directory": true,
+  "rust_toolchain_version_pin": "1.97.0",
+  "schema_version": 1,
+  "toolchain_pin": "Rust 1.97.0 commit 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3 plus listed binary/library SHA256; Cargo 1.97.0 commit c980f4866141969fab6254a680546a277789d6f0",
+  "tools": {
+    "cargo": {
+      "path": "/var/home/bazzite/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/bin/cargo",
+      "sha256": "eff12bab37b9d9e01324db4583eaf55b2cd82ac3008a7e59876e4cd2e9a028f5",
+      "size_bytes": 42844376,
+      "version": "cargo 1.97.0 (c980f4866 2026-06-30)\nrelease: 1.97.0\ncommit-hash: c980f4866141969fab6254a680546a277789d6f0\ncommit-date: 2026-06-30\nhost: x86_64-unknown-linux-gnu\nlibgit2: 1.9.2 (sys:0.20.4 vendored)\nlibcurl: 8.20.0-DEV (sys:0.4.88+curl-8.20.0 vendored ssl:OpenSSL/3.6.2)\nssl: OpenSSL 3.6.2 7 Apr 2026\nos: Fedora 44.0.0 [64-bit]"
+    },
+    "cc": {
+      "path": "/usr/bin/gcc",
+      "sha256": "153e46b4657620f2baef1b4a70b4b4f275772faa5b0fb9e415697e87ebcb7fea",
+      "size_bytes": 1504304,
+      "version": "gcc (GCC) 16.2.1 20260819 (Red Hat 16.2.1-2)\nCopyright (C) 2026 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+    },
+    "cxx": {
+      "path": "/usr/bin/c++",
+      "sha256": "579d25c2d1e45abeed0c63a517b5c52f6d09ea811a787bf7a7c677a7fd0726f6",
+      "size_bytes": 1508440,
+      "version": "c++ (GCC) 16.2.1 20260819 (Red Hat 16.2.1-2)\nCopyright (C) 2026 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE."
+    },
+    "gnu_ld": {
+      "path": "/usr/bin/ld.bfd",
+      "sha256": "eccfdb2b11bcae1ca6e2915a40db609299f46d7def305dab744c0da0aaf54370",
+      "size_bytes": 1598648,
+      "version": "GNU ld version 2.46.1-1.fc44\nCopyright (C) 2026 Free Software Foundation, Inc.\nThis program is free software; you may redistribute it under the terms of\nthe GNU General Public License version 3 or (at your option) a later version.\nThis program has absolutely no warranty."
+    },
+    "rust_lld": {
+      "path": "/var/home/bazzite/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld",
+      "sha256": "8e5130a02d8f3473ed4c4b971d43c301205c89854bb467257e64eafe4bf21ca8",
+      "size_bytes": 11604312,
+      "version": "LLD 22.1.6 (/checkout/src/llvm-project/llvm 08c84e69a84d95936296dfcab0e38b34100725d5) (compatible with GNU linkers)"
+    },
+    "rustc": {
+      "path": "/var/home/bazzite/.rustup/toolchains/1.97.0-x86_64-unknown-linux-gnu/bin/rustc",
+      "sha256": "df13f58759c0662831983e3a6501c63c1fc12ea60ec4e1d1ac35e5fe43c500c0",
+      "size_bytes": 646344,
+      "version": "rustc 1.97.0 (2d8144b78 2026-07-07)\nbinary: rustc\ncommit-hash: 2d8144b7880597b6e6d3dfd63a9a9efae3f533d3\ncommit-date: 2026-07-07\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.0\nLLVM version: 22.1.6"
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "contract": "arnis-tiler/v3.1/1",
+  "external_output": {
+    "allowed_world_top_level": [
+      "region"
+    ],
+    "maps_signage_branding_global_settings": "suppressed; final assembly is consumer-owned",
+    "regions": "region/r.<region_x>.<region_z>.mca"
+  },
+  "grid": {
+    "bands": [
+      "elevation-f32",
+      "land-cover-u8",
+      "water-distance-u8",
+      "water-blend-f32"
+    ],
+    "endian": "little",
+    "format": "ARNTGRID2",
+    "height_units": "minecraft_y",
+    "integrity": "sha256",
+    "metadata_max_bytes": 1048576,
+    "provider_max_axis": 16384,
+    "provider_max_cells": 268435456,
+    "scalar": "f32"
+  },
+  "grid_band_bytes_per_cell": 10,
+  "grid_digest_bytes": 32,
+  "grid_header_payload_digest": "SHA256(magic || little_endian_u32_metadata_length || exact_UTF8_metadata || all_four_payload_bands); digest field excluded",
+  "grid_metadata_format_version": 2,
+  "grid_payload_order": [
+    "elevation-f32",
+    "land-cover-u8",
+    "water-distance-u8",
+    "water-blend-f32"
+  ],
+  "grid_prefix_bytes": 13,
+  "native_java": {
+    "data_version": 3955,
+    "minecraft_version": "1.21.1"
+  },
+  "qualified": false,
+  "schema_version": 1,
+  "scope": "external Java tile output only; stock invocations preserve upstream behavior",
+  "source_evidence": [
+    "src/elevation/master_grid.rs",
+    "src/world_editor/java.rs",
+    "src/world_editor/mod.rs",
+    "src/data_processing.rs"
+  ]
+}

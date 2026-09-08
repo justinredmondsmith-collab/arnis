@@ -1,0 +1,431 @@
+{
+  "assets": {
+    "path": "tracked-assets.json",
+    "sha256": "88613ec04bcaf43a4276d5bd8b25c644207adef664e2c6cde501add86ee3fa57",
+    "size_bytes": 387923
+  },
+  "build": {
+    "artifact": {
+      "filename": "arnis",
+      "sha256": "e6957b956396c288b1ac3017b618d897eabf96be828769b03b3efc131a2ed2db",
+      "size_bytes": 49444376
+    },
+    "build_config_inputs": [
+      {
+        "path": "rust-toolchain.toml",
+        "sha256": "174a086284d57e79557b62bc627e96257893375dfd37239e3c3e830ce2629b95",
+        "size_bytes": 86
+      },
+      {
+        "path": ".cargo/config.toml",
+        "sha256": "35fb1f8ac545283f4b2e289aa73ffe8a16586a3a4b2507e50cd87db436f8b076",
+        "size_bytes": 203
+      },
+      {
+        "path": ".github/actions/setup-arnis-linux/action.yml",
+        "sha256": "84f784efee6b27c65400e1b81540f932387bb09c1b864b18b26c45f968ac6e0c",
+        "size_bytes": 2298
+      }
+    ],
+    "cargo_build_argv": [
+      "cargo",
+      "build",
+      "--locked",
+      "--offline",
+      "--release",
+      "--no-default-features"
+    ],
+    "default_features": false,
+    "environment_evidence": "Original PR capture had no listed override variables. Final RC source .cargo/config.toml supplies SOURCE_DATE_EPOCH=1788828777; externally overriding it changes the tuple and is not permitted for this candidate.",
+    "host_evidence": {
+      "architecture": "x86_64",
+      "glibc": "glibc 2.43",
+      "os_release": {
+        "BUILD_ID": "Stable (F44.20260831)",
+        "ID": "bazzite",
+        "NAME": "Bazzite",
+        "VARIANT_ID": "bazzite-nvidia-open",
+        "VERSION_ID": "44"
+      },
+      "scope": "Byte reproducibility verified in independent source/target trees on this host; cross-host native-toolchain reproducibility is not claimed."
+    },
+    "original_build_override_environment": {},
+    "original_pr_artifact": {
+      "filename": "arnis",
+      "sha256": "81e964454d9d35311c24313bfa00b922c97a38c6be9b0b49e897cd0904a4e616",
+      "size_bytes": 49444376,
+      "source_commit": "940a587ee2fda3537add7d7cb735c27ce2e51935"
+    },
+    "preserved_candidate_artifact": {
+      "path": "/var/home/bazzite/arnis-v31-rc-artifacts/rc1/arnis",
+      "sha256": "e6957b956396c288b1ac3017b618d897eabf96be828769b03b3efc131a2ed2db",
+      "size_bytes": 49444376
+    },
+    "profile": "release",
+    "profile_settings": {
+      "lto": "thin",
+      "overflow-checks": true
+    },
+    "reproducibility_diagnosis": {
+      "cause": "C __DATE__/__TIME__ embed build time",
+      "dependency": "libmimalloc-sys0.1.49",
+      "evidence_owner": "Root clean-clone investigation; no other printable string differences found; this is not proof of byte equality.",
+      "original_observed_times": [
+        "18:50:24",
+        "18:57:52"
+      ],
+      "source": "options.c"
+    },
+    "reproducibility_evidence": {
+      "identity_record": {
+        "path": "/tmp/arnis-v31-rc1-final-identity.json",
+        "sha256": "1c98c7c33cc7eca647e6af9ba23622ff6ce78547cf86a25acbd4f3b099605937",
+        "size_bytes": 2163
+      },
+      "independent_builds": [
+        "/tmp/arnis-v31-rc1-clean-clone/target/release/arnis",
+        "/tmp/arnis-v31-rc1-second-clone/target/release/arnis"
+      ],
+      "logs": [
+        {
+          "path": "/tmp/arnis-v31-rc1-final-build-a.log",
+          "sha256": "5269e4e388c15d0563e9686ace8ad9ba3e30aadb6f98b1e30cfe971a61bd7288",
+          "size_bytes": 4578
+        },
+        {
+          "path": "/tmp/arnis-v31-rc1-final-build-b.log",
+          "sha256": "889aaf8e01d554ba42ad1024c1c2edb3fd1cbe90bc99f392c3d022f76852ece9",
+          "size_bytes": 4579
+        }
+      ],
+      "sequence": "Two independent fresh fixed-epoch builds of coastal940a587 matched first; each clone then checked out reviewed build-only a3d39ca and rebuilt incrementally, retaining its own independently built dependency artifacts. Final a3d executables match. Final a3d runs are not described as cold builds."
+    },
+    "reproducibility_status": "Two independent clone/target outputs match complete SHA256; root also compared complete bytes. Final a3d builds reused each clone independent earlier fixed-epoch dependency build; NOT two cold a3d builds.",
+    "required_environment": {
+      "SOURCE_DATE_EPOCH": "1788828777"
+    },
+    "root_features": [],
+    "rustc": "rustc 1.97.0 (2d8144b78 2026-07-07)",
+    "source_date_epoch_origin": "Pinned timestamp of initial coastal source940a587ee2fda3537add7d7cb735c27ce2e51935; intentionally not the newer build-pin commit timestamp",
+    "target": "x86_64-unknown-linux-gnu",
+    "target_selection": "host default x86_64-unknown-linux-gnu; no explicit --target used",
+    "toolchain_manifest": {
+      "path": "toolchain.json",
+      "sha256": "5b8d39b34b0a902062662e3dcf6793e310357cd553743f1c856f1dd731ac01bf",
+      "size_bytes": 4336
+    }
+  },
+  "candidate_id": "arnis-v3.1-development-rc1",
+  "contract": {
+    "canonical_capability_sha256": "114dfd5fffc05f96a9ba97c0647a50848ccd4a3bf7f0abc09e2231ee934caf52",
+    "canonical_profile_sha256": "02e80bc12bdc17483b94031ca1f78a842371226c8f997909f8fded5adfe2f81b",
+    "capabilities": [],
+    "capability_report": {
+      "path": "capabilities.json",
+      "sha256": "ff80193aa250abaaccf427eca515ae7391d54d54c064b6c617d8b471d41b2599",
+      "size_bytes": 1727
+    },
+    "capability_report_evidence": "Actual reports from both final executables match capabilities.json; build identity clean at a3d39ca",
+    "capability_schema_version": 1,
+    "contract": "arnis-tiler/v3.1/1",
+    "grid": {
+      "bands": [
+        "elevation-f32",
+        "land-cover-u8",
+        "water-distance-u8",
+        "water-blend-f32"
+      ],
+      "endian": "little",
+      "format": "ARNTGRID2",
+      "height_units": "minecraft_y",
+      "integrity": "sha256",
+      "metadata_max_bytes": 1048576,
+      "provider_max_axis": 16384,
+      "provider_max_cells": 268435456,
+      "scalar": "f32"
+    },
+    "native_java": {
+      "data_version": 3955,
+      "minecraft_version": "1.21.1"
+    },
+    "output_layout": {
+      "path": "output-layout.json",
+      "sha256": "508591dbe22771fefbfa7990d047dae37309d6e2e2bc88f32982171f0728072b",
+      "size_bytes": 1419
+    },
+    "profile": {
+      "path": "profile.json",
+      "sha256": "36e0e2eee141a7532be7b590858258413314b5bb2ad3d8b402b383c9759947fe",
+      "size_bytes": 1110
+    }
+  },
+  "evidence": {
+    "battery_coastal_candidate": {
+      "bbox": [
+        40.7027,
+        -74.0186,
+        40.7042,
+        -74.0166
+      ],
+      "latitude": 40.7042,
+      "longitude": -74.0186,
+      "master_or_world_emitted": false,
+      "note": "Do not relax conflict limit or alter coastline classification just to pass. Historical OSM hash mismatch/acquisition coverage remain unresolved.",
+      "repaired_dem_m": 13.585780053858947,
+      "status": "REJECTED and unqualified",
+      "wet_dem_limit_m": 2.0
+    },
+    "behavior_evidence_source_commit": "940a587ee2fda3537add7d7cb735c27ce2e51935",
+    "ci_status": "PR9 CI pending at preparation; not inferred from local passes",
+    "final_build_only_commit_validation": "Pinned a3d39ca: full headless714passed0failed6ignored, format passed, isolated CLI+stock1024normalized chunks equal, synthetic/real-provider export passed with same f98b1b... grid hash. Broad suite contains live Overpass and is not hermetic.",
+    "final_validation_logs": [
+      {
+        "path": "/tmp/arnis-v31-rc1-final-tests.log",
+        "sha256": "c21c3a90d199501141dae1b727a311ff84343d4d123df365bd263259df0baaa3",
+        "size_bytes": 73638
+      },
+      {
+        "path": "/tmp/arnis-v31-rc1-final-cli-stock.log",
+        "sha256": "080fd522273c50bee5ebd1f4f881dc3bf58d046b7239f945ca2f0f43eb0bd59c",
+        "size_bytes": 207
+      },
+      {
+        "path": "/tmp/arnis-v31-rc1-final-export.log",
+        "sha256": "ecfd61b7ad12b7425cf9a2cd83e7eef2a109fbc202ee6d50e4d306d6bf773215",
+        "size_bytes": 314
+      }
+    ],
+    "full_headless": {
+      "hermetic": false,
+      "ignored": 6,
+      "passed": 714
+    },
+    "github_ci_at_freeze": {
+      "all_features_build": "pending",
+      "benchmark": "passed",
+      "head_commit": "a3d39ca44a78a6539cc920f5f4b029818859cc21",
+      "lint": "passed",
+      "run_url": "https://github.com/justinredmondsmith-collab/arnis/actions/runs/34175624686",
+      "scope": "Local required headless checks completed; broader GUI/all-features build still running at development freeze. Final remote outcome tracked on PR9."
+    },
+    "stock_comparison": {
+      "normalized_chunks_equal": 1024,
+      "scope": "bounded flat geo-only oracle; not terrain/default parity"
+    }
+  },
+  "invalidation_policy": [
+    {
+      "change": "Renderer source/build/lockfile/toolchain/linker/epoch/features/embedded assets",
+      "evidence": "Rebuild, capability/binary identity, affected focused regressions, full headless and isolated stock/provider smokes; repeat two-build comparison when build inputs change",
+      "identity": "New renderer RC tuple; preserve previous RC"
+    },
+    {
+      "change": "ABI/grid/profile schema, capability semantics or output layout",
+      "evidence": "Producer and consumer positive/negative admission, grid corruption/bounds, frozen export/render/seam and relevant compatibility qualification",
+      "identity": "Version affected contract/profile and create matching renderer/consumer candidate tuple; new master/cache namespace"
+    },
+    {
+      "change": "Tiler code only with unchanged renderer contract/profile",
+      "evidence": "Affected consumer/cache/orchestration/assembly/retarget and end-to-end tests; full downstream qualification evidence binds the new tiler commit",
+      "identity": "New tiler commit/build/generation identity; unchanged renderer RC may be reused"
+    },
+    {
+      "change": "Any bytes, recipe or hash in this RC pinned qualification fixture",
+      "evidence": "Readmit exact files, decoder/source rejection and repeatability checks; rerun affected golden/seam/stock qualification",
+      "identity": "New fixture version and qualification evidence; because fixture identity is part of this immutable tuple, publish a revised candidate/evidence tuple without overwriting RC1"
+    },
+    {
+      "change": "New project bbox/location or independently admitted source dataset under the unchanged contract/profile",
+      "evidence": "Dataset coverage/hash/classification preflight and bounded project-quality checks; never relabel an unqualified dataset or mutate the RC pinned fixture",
+      "identity": "New project source-manifest/master/tile/cache/generation identity; no new renderer RC solely for a new location"
+    }
+  ],
+  "provider_fixture": {
+    "bbox": [
+      40.7,
+      -74.01,
+      40.7001,
+      -74.0099
+    ],
+    "entries": [
+      {
+        "key": "master-osm",
+        "kind": "osm",
+        "path": "osm.json",
+        "sha256": "a91d7cc1eff74cb5a904d6073dd7724daedc69c4d432de62a1630a2e51bf94a6",
+        "size_bytes": 15
+      },
+      {
+        "key": "koppen_0p1.bin",
+        "kind": "climate",
+        "path": "koppen_0p1.bin",
+        "sha256": "533e3f2f20ac758ce87014aeb3151e7552432f1146e4bb3022cff9012fb6b047",
+        "size_bytes": 6480000
+      },
+      {
+        "key": "aws:15:9647:12321",
+        "kind": "elevation",
+        "path": "aws-15-9647-12321.png",
+        "sha256": "79da4e8c9002067825be93badc8e6bbc6f2ae75ad65c9d11a4341491be182701",
+        "size_bytes": 53650
+      },
+      {
+        "key": "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N39W075_Map.tif#bytes=0-65535",
+        "kind": "land_cover",
+        "path": "esa-header.bin",
+        "sha256": "011562d908cfaaab1e42d5402cc3edf1e1ae744541a0ba81e3338d8a38acaffe",
+        "size_bytes": 65536
+      },
+      {
+        "key": "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N39W075_Map.tif#bytes=44521462-44566878",
+        "kind": "land_cover",
+        "path": "esa-tile.bin",
+        "sha256": "83a785be652e24d8761f83c999c305f9c740f19d55e3ea019e1d1b6bf55c9cbe",
+        "size_bytes": 45417
+      },
+      {
+        "key": "master-water-classification",
+        "kind": "water_classification",
+        "path": "provider-water-classification.json",
+        "sha256": "170d631cc66a9c5861cfbb7816571ccf9e6b1500b864b004751153cdbc8f07e7",
+        "size_bytes": 684
+      }
+    ],
+    "expected_grid_sha256": "f98b1b63488ae6cfdf0d6fb763f7d01b91297bd5afd040d6586f1b8654852f4c",
+    "recipe": {
+      "path": "provider-fixture-recipe.json",
+      "sha256": "864c72a31b2e92a9a96ba9b648bd3caf6de9967b0ac2531d7b24bcc04eedeece",
+      "size_bytes": 1958
+    },
+    "scope": "108-cell real-provider decoder/repeatability check with empty synthetic OSM; not real coastline/world qualification",
+    "source_count": 6,
+    "tracked_recipe_raw_sha256": "a3de05a608a1eb402cb7422b56b27a52c7348b6acd87e9edc5a4f95f18fd55bd"
+  },
+  "qualified": false,
+  "remaining_gates": [
+    "full consumer handshake and cache/resource enforcement",
+    "complete Java1.20.1 vocabulary, NBT conversion and Forge client/server checks",
+    "full terrain/default stock oracle and source/worker/seam/failure-recovery qualification",
+    "bounded NYC/coastal quality qualification",
+    "qualified publication/install promotion"
+  ],
+  "schema_version": 1,
+  "source": {
+    "build_only_delta_from_coastal": [
+      "rust-toolchain.toml",
+      ".cargo/config.toml",
+      ".github/actions/setup-arnis-linux/action.yml"
+    ],
+    "coastal_behavior_evidence_commit": "940a587ee2fda3537add7d7cb735c27ce2e51935",
+    "commit": "a3d39ca44a78a6539cc920f5f4b029818859cc21",
+    "dirty": false,
+    "files": [
+      {
+        "path": "rust-toolchain.toml",
+        "sha256": "174a086284d57e79557b62bc627e96257893375dfd37239e3c3e830ce2629b95",
+        "size_bytes": 86
+      },
+      {
+        "path": ".cargo/config.toml",
+        "sha256": "35fb1f8ac545283f4b2e289aa73ffe8a16586a3a4b2507e50cd87db436f8b076",
+        "size_bytes": 203
+      },
+      {
+        "path": ".github/actions/setup-arnis-linux/action.yml",
+        "sha256": "84f784efee6b27c65400e1b81540f932387bb09c1b864b18b26c45f968ac6e0c",
+        "size_bytes": 2298
+      },
+      {
+        "path": "Cargo.lock",
+        "sha256": "86ed3e5e172d2c286792c91da11527528c842858d0665aa59b650f9512fba03e",
+        "size_bytes": 189178
+      },
+      {
+        "path": "Cargo.toml",
+        "sha256": "438d40d36ab9e64d4f52b4a74f7823e52d7e53aa2118166819d8650ca0c22a01",
+        "size_bytes": 3067
+      },
+      {
+        "path": "src/build.rs",
+        "sha256": "04f5e31b4cfbfba9c9e7e1c829e272955539f4a61dbd568796af05b338598bdd",
+        "size_bytes": 4877
+      },
+      {
+        "path": "src/tiler_contract.rs",
+        "sha256": "46a564c2073887e6e64f39b7654d46534c88822fb3808a47ae29944730bfea12",
+        "size_bytes": 22447
+      },
+      {
+        "path": "src/tiler_runtime.rs",
+        "sha256": "8c25db5a4d688a5954c3f19823b9b6620d8f8a781228687a718acc83ddc4aa2b",
+        "size_bytes": 19803
+      },
+      {
+        "path": "src/elevation/master_grid.rs",
+        "sha256": "07c04143b9a93a190299f6b716041d8ec04bdee14547616b51df12e77db69a31",
+        "size_bytes": 32041
+      },
+      {
+        "path": "src/coastal.rs",
+        "sha256": "96405134b8239d18efd6224f28cfe8c3ad3d0048105b098ef5cdc9de8f958dc9",
+        "size_bytes": 20145
+      },
+      {
+        "path": "docs/contracts/tiler-profile.json",
+        "sha256": "9935e4eca335af91e15b85034384723dabc80b5a8c04dfd6c3f2147184aa8c5c",
+        "size_bytes": 1110
+      },
+      {
+        "path": "docs/contracts/tiler-capability-template.json",
+        "sha256": "8e273aedfff3a4a82413fc09a99ce39417f66fae152a8d26667cb92b60ba22f0",
+        "size_bytes": 1921
+      },
+      {
+        "path": "docs/contracts/frozen-provider-fixture.json",
+        "sha256": "a3de05a608a1eb402cb7422b56b27a52c7348b6acd87e9edc5a4f95f18fd55bd",
+        "size_bytes": 1958
+      },
+      {
+        "path": "docs/contracts/provider-water-classification.json",
+        "sha256": "170d631cc66a9c5861cfbb7816571ccf9e6b1500b864b004751153cdbc8f07e7",
+        "size_bytes": 684
+      },
+      {
+        "path": "scripts/acquire_frozen_provider_fixture.py",
+        "sha256": "0f95a07fd0a515403b1c9d4a17762c9a9a03892f50e731cccf01c8e7745782f1",
+        "size_bytes": 2609
+      },
+      {
+        "path": "scripts/smoke_frozen_export.py",
+        "sha256": "83d3ec094e888febcf1f5d529afe090a8a89940eed8b9e0abc86dfa2cf4261c5",
+        "size_bytes": 10840
+      },
+      {
+        "path": "scripts/smoke_tiler_cli.py",
+        "sha256": "0f37a50b5de25498e82adbecfcadebb3f33f0e78b0db3074ac2352217a58028c",
+        "size_bytes": 10287
+      },
+      {
+        "path": "docs/plans/2026-09-07-v31-coastal-validation.md",
+        "sha256": "bb429816bc626b804cb719cbf7416cf28e6005d597c1913a01717b71d939c744",
+        "size_bytes": 4125
+      }
+    ],
+    "permanent_ref": "refs/tags/tiler-v3.1.0-dev-rc1",
+    "permanent_ref_status": "Intended immutable reference; ref creation/verification belongs to root, not this draft generator",
+    "remote_ref_verification": {
+      "peeled_commit": "a3d39ca44a78a6539cc920f5f4b029818859cc21",
+      "ref": "refs/tags/tiler-v3.1.0-dev-rc1",
+      "tag_object": "53862a63f2acb9745213eb606861f52f8bb4bde9",
+      "verified": true
+    },
+    "repository": "https://github.com/justinredmondsmith-collab/arnis",
+    "tree": "7647c3e82c53733a9a0f22a0403b7d041bb3e3ec",
+    "upstream": {
+      "commit": "3918513acb4e5e9ef4332418531a7c444d2b5acf",
+      "version": "3.1.0"
+    }
+  },
+  "stage_status_supersession": "This tuple supersedes earlier stage-era pending-coastal/#2-not-closable statements in world-validation.md and unchecked completed world/coastal implementation checklist items. Coastal implementation and focused reviews are complete at this commit; successful real Battery shoreline qualification is not. Historical validation counts and earlier five-source recipe hashes remain scoped to their recorded commits.",
+  "status": "FROZEN UNQUALIFIED DEVELOPMENT RC; no production or full-contract admission"
+}
