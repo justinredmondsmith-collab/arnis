@@ -129,6 +129,33 @@ pub fn fetch_elevation_data(
     source_mode: SourceMode,
     benchmark: bool,
 ) -> Result<ElevationData, Box<dyn std::error::Error>> {
+    fetch_elevation_data_with_sources(
+        bbox,
+        scale,
+        ground_level,
+        min_ground_level,
+        disable_height_limit,
+        extended_max_y,
+        land_cover,
+        source_mode,
+        benchmark,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fetch_elevation_data_with_sources(
+    bbox: &LLBBox,
+    scale: f64,
+    ground_level: i32,
+    min_ground_level: i32,
+    disable_height_limit: bool,
+    extended_max_y: i32,
+    land_cover: Option<&mut LandCoverData>,
+    source_mode: SourceMode,
+    benchmark: bool,
+    sources: Option<&crate::tiler_contract::AdmittedSources>,
+) -> Result<ElevationData, Box<dyn std::error::Error>> {
     let mut bench = crate::bench::Bench::new(benchmark);
     let (world_width, world_height, grid_width, grid_height) = compute_grid_dims(bbox, scale);
 
@@ -144,7 +171,19 @@ pub fn fetch_elevation_data(
 
     emit_gui_progress_update(10.0, "Downloading data...");
 
-    let raw = fetch_raw_with_fallback(&chain, bbox, grid_width, grid_height)?;
+    let raw = if let Some(sources) = sources {
+        if !matches!(source_mode, SourceMode::AwsOnly) {
+            return Err("Frozen elevation requires AWS-only".into());
+        }
+        providers::aws_terrain::AwsTerrain.fetch_raw_frozen(
+            bbox,
+            grid_width,
+            grid_height,
+            sources,
+        )?
+    } else {
+        fetch_raw_with_fallback(&chain, bbox, grid_width, grid_height)?
+    };
 
     bench.mark("elev_raw_fetch");
     emit_gui_progress_update(12.0, "Processing elevation...");

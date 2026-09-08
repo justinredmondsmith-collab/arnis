@@ -1,0 +1,48 @@
+{
+  "entries": [
+    {
+      "key": "master-osm",
+      "kind": "osm",
+      "path": "osm.json",
+      "sha256": "a91d7cc1eff74cb5a904d6073dd7724daedc69c4d432de62a1630a2e51bf94a6",
+      "size_bytes": 15
+    },
+    {
+      "key": "koppen_0p1.bin",
+      "kind": "climate",
+      "path": "koppen_0p1.bin",
+      "sha256": "533e3f2f20ac758ce87014aeb3151e7552432f1146e4bb3022cff9012fb6b047",
+      "size_bytes": 6480000
+    },
+    {
+      "key": "aws:15:9647:12321",
+      "kind": "elevation",
+      "path": "aws-15-9647-12321.png",
+      "sha256": "79da4e8c9002067825be93badc8e6bbc6f2ae75ad65c9d11a4341491be182701",
+      "size_bytes": 53650
+    },
+    {
+      "key": "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N39W075_Map.tif#bytes=0-65535",
+      "kind": "land_cover",
+      "path": "esa-header.bin",
+      "sha256": "011562d908cfaaab1e42d5402cc3edf1e1ae744541a0ba81e3338d8a38acaffe",
+      "size_bytes": 65536
+    },
+    {
+      "key": "https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N39W075_Map.tif#bytes=44521462-44566878",
+      "kind": "land_cover",
+      "path": "esa-tile.bin",
+      "sha256": "83a785be652e24d8761f83c999c305f9c740f19d55e3ea019e1d1b6bf55c9cbe",
+      "size_bytes": 45417
+    }
+  ],
+  "profile_sha256": "0e9688f0976c7053e07db398dec95466edeca0d49ddbed47e0a7581f29e80cc6",
+  "schema_version": 1,
+  "fixture_notes": "Real provider bytes for a 108-cell decoder check; empty synthetic OSM. Not NYC coastal or world qualification.",
+  "bbox": [
+    40.7,
+    -74.01,
+    40.7001,
+    -74.0099
+  ]
+}

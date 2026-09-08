@@ -5,7 +5,7 @@ use crate::coordinate_system::{
     geographic::LLBBox,
 };
 use crate::elevation::compute_grid_dims;
-use crate::elevation_data::{fetch_elevation_data, ElevationData};
+use crate::elevation_data::ElevationData;
 use crate::land_cover::{self, LandCoverData};
 use crate::osm_parser::ProcessedElement;
 #[cfg(feature = "gui")]
@@ -243,6 +243,37 @@ impl Ground {
         benchmark: bool,
         canopy_height: bool,
     ) -> Self {
+        Self::new_enabled_with_sources(
+            bbox,
+            scale,
+            ground_level,
+            min_ground_level,
+            disable_height_limit,
+            extended_max_y,
+            aws_only_elevation,
+            benchmark,
+            canopy_height,
+            None,
+        )
+        .expect("stock ground retains fallback")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_enabled_with_sources(
+        bbox: &LLBBox,
+        scale: f64,
+        ground_level: i32,
+        min_ground_level: i32,
+        disable_height_limit: bool,
+        extended_max_y: i32,
+        aws_only_elevation: bool,
+        benchmark: bool,
+        canopy_height: bool,
+        sources: Option<&crate::tiler_contract::AdmittedSources>,
+    ) -> Result<Self, String> {
+        if sources.is_some() && (!aws_only_elevation || canopy_height) {
+            return Err("Frozen ground requires AWS-only without canopy".into());
+        }
         let mut bench = crate::bench::Bench::new(benchmark);
         // Fetch land cover FIRST so we can feed it into the elevation
         // post-processing pipeline for land-cover-aware artifact repair.
@@ -254,7 +285,16 @@ impl Ground {
             let canopy_job = canopy_height
                 .then(|| scope.spawn(|| canopy::fetch_canopy_data(bbox, grid_w, grid_h)));
             let mut land_cover = {
-                let lc = land_cover::fetch_land_cover_data(bbox, grid_w, grid_h);
+                let lc = if sources.is_some() {
+                    Some(
+                        land_cover::fetch_land_cover_data_with_sources(
+                            bbox, grid_w, grid_h, sources,
+                        )
+                        .map_err(|e| e.to_string())?,
+                    )
+                } else {
+                    land_cover::fetch_land_cover_data(bbox, grid_w, grid_h)
+                };
                 if lc.is_some() {
                     println!("Land cover data loaded successfully");
                 } else {
@@ -283,17 +323,33 @@ impl Ground {
             } else {
                 crate::elevation::SourceMode::Auto
             };
-            match fetch_elevation_data(
-                bbox,
-                scale,
-                water_floor,
-                sink_floor,
-                disable_height_limit,
-                extended_max_y,
-                land_cover.as_mut(),
-                source_mode,
-                benchmark,
-            ) {
+            let elevation = if sources.is_some() {
+                crate::elevation::fetch_elevation_data_with_sources(
+                    bbox,
+                    scale,
+                    water_floor,
+                    sink_floor,
+                    disable_height_limit,
+                    extended_max_y,
+                    land_cover.as_mut(),
+                    source_mode,
+                    benchmark,
+                    sources,
+                )
+            } else {
+                crate::elevation_data::fetch_elevation_data(
+                    bbox,
+                    scale,
+                    water_floor,
+                    sink_floor,
+                    disable_height_limit,
+                    extended_max_y,
+                    land_cover.as_mut(),
+                    source_mode,
+                    benchmark,
+                )
+            };
+            match elevation {
                 Ok(elevation_data) => {
                     let lat = (bbox.min().lat() + bbox.max().lat()) / 2.0;
                     // Must use the base the scaler actually settled on: snow_threshold_for
@@ -301,7 +357,7 @@ impl Ground {
                     let base = elevation_data.ground_level;
                     let snow_threshold_y = snow_threshold_for(&elevation_data, lat, base);
                     let canopy = canopy_job.and_then(|h| h.join().ok()).flatten();
-                    Self {
+                    Ok(Self {
                         elevation_enabled: true,
                         ground_level: base,
                         elevation_data: Some(elevation_data),
@@ -319,9 +375,12 @@ impl Ground {
                         }),
                         snow_threshold_y,
                         climate: crate::climate::Climate::classify(bbox),
-                    }
+                    })
                 }
                 Err(e) => {
+                    if sources.is_some() {
+                        return Err(e.to_string());
+                    }
                     eprintln!("Failed to fetch elevation data: {}", e);
                     #[cfg(feature = "gui")]
                     {
@@ -336,7 +395,7 @@ impl Ground {
                     // elevation grid to align against.
                     // Still has to be collected before the scope can close.
                     drop(canopy_job.and_then(|h| h.join().ok()));
-                    Self {
+                    Ok(Self {
                         elevation_enabled: false,
                         ground_level,
                         elevation_data: None,
@@ -350,7 +409,7 @@ impl Ground {
                         export_context: None,
                         snow_threshold_y: i32::MAX,
                         climate: crate::climate::Climate::classify(bbox),
-                    }
+                    })
                 }
             }
         })
@@ -1007,6 +1066,31 @@ impl Ground {
             eprintln!("Failed to save debug image: {e}");
         }
     }
+}
+
+pub(crate) fn generate_ground_data_frozen(
+    args: &Args,
+    bbox: LLBBox,
+    sources: &crate::tiler_contract::AdmittedSources,
+) -> Result<Ground, String> {
+    if !args.terrain() {
+        return Err("Frozen master requires terrain".into());
+    }
+    let ground = Ground::new_enabled_with_sources(
+        &bbox,
+        args.scale,
+        args.ground_level,
+        min_ground_level_for(args),
+        args.disable_height_limit,
+        extended_max_y_for(args),
+        args.aws_only_elevation,
+        args.benchmark,
+        args.canopy_height,
+        Some(sources),
+    )?;
+    crate::world_editor::set_base_chunk_y(ground.base_level());
+    crate::world_editor::set_terrain_floor_y(ground.base_level());
+    Ok(ground)
 }
 
 pub fn generate_ground_data(args: &Args, bbox: LLBBox) -> Ground {

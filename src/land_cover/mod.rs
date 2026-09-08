@@ -175,27 +175,47 @@ pub fn fetch_land_cover_data(
     grid_width: usize,
     grid_height: usize,
 ) -> Option<LandCoverData> {
+    fetch_land_cover_data_with_sources(bbox, grid_width, grid_height, None).ok()
+}
+
+pub(crate) fn fetch_land_cover_data_with_sources(
+    bbox: &LLBBox,
+    grid_width: usize,
+    grid_height: usize,
+    sources: Option<&crate::tiler_contract::AdmittedSources>,
+) -> Result<LandCoverData, Box<dyn std::error::Error>> {
+    if sources.is_some() && (bbox.min().lat() < -60.0 || bbox.max().lat() >= 84.0) {
+        return Err("Frozen master requires complete ESA latitude coverage [-60, 84)".into());
+    }
     println!("Fetching land cover data (ESA WorldCover 2021)...");
     emit_gui_progress_update(9.0, "Downloading data...");
 
-    let cache_dir = get_cache_dir();
-    if !cache_dir.exists() {
+    let cache_dir = if sources.is_some() {
+        PathBuf::new()
+    } else {
+        get_cache_dir()
+    };
+    if sources.is_none() && !cache_dir.exists() {
         if let Err(e) = std::fs::create_dir_all(&cache_dir) {
             eprintln!("Warning: Failed to create land cover cache directory: {e}");
-            return None;
+            return Err("Land cover unavailable".into());
         }
     }
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .ok()?;
+    let client = match sources {
+        Some(sources) => EsaSource::Frozen(sources),
+        None => EsaSource::Live(
+            reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()?,
+        ),
+    };
 
     // Determine which ESA tiles overlap our bbox
     let tile_specs = get_esa_tile_specs(bbox);
     if tile_specs.is_empty() {
         eprintln!("Warning: Bounding box outside ESA WorldCover coverage (-60° to +84° latitude)");
-        return None;
+        return Err("Land cover unavailable".into());
     }
 
     // Read the ESA pixels into one raster, then resample every grid cell from it.
@@ -215,6 +235,9 @@ pub fn fetch_land_cover_data(
         ) {
             Ok(()) => {}
             Err(e) => {
+                if sources.is_some() {
+                    return Err(e);
+                }
                 eprintln!("Warning: Failed to read ESA tile {tile_url}: {e}");
             }
         }
@@ -231,10 +254,11 @@ pub fn fetch_land_cover_data(
             LogLevel::Warning,
             "ESA WorldCover returned no data for the requested bbox (generation proceeding without land cover).",
         );
-        return None;
+        return Err("Land cover unavailable".into());
     }
-    let raster = raster?;
-    let mapping = GridMapping::new(bbox, raster.ppd, grid_width, grid_height)?;
+    let raster = raster.ok_or("Land cover raster unavailable")?;
+    let mapping = GridMapping::new(bbox, raster.ppd, grid_width, grid_height)
+        .ok_or("Invalid land cover grid")?;
     let mut grid = raster.sample_grid(&mapping);
 
     // Straighten the shore before anything else reads the water mask.
@@ -253,7 +277,7 @@ pub fn fetch_land_cover_data(
     // Used for shoreline blending (land cells adjacent to water get sand surface).
     let water_distance = compute_water_distance(&grid, grid_width, grid_height);
 
-    Some(LandCoverData {
+    Ok(LandCoverData {
         grid,
         water_distance,
         water_blend_cache: OnceCell::new(),
@@ -493,8 +517,18 @@ impl GridMapping {
 
 /// Read the pixels of one ESA tile overlapping the bbox into `raster`, creating it from
 /// the tile's pixel size on first use. Only the COG tiles that overlap are fetched.
+enum EsaSource<'a> {
+    Live(reqwest::blocking::Client),
+    Frozen(&'a crate::tiler_contract::AdmittedSources),
+}
+impl EsaSource<'_> {
+    fn frozen(&self) -> bool {
+        matches!(self, Self::Frozen(_))
+    }
+}
+
 fn read_esa_tile_into_raster(
-    client: &reqwest::blocking::Client,
+    client: &EsaSource<'_>,
     url: &str,
     cache_dir: &Path,
     tile_lat: f64,
@@ -515,12 +549,14 @@ fn read_esa_tile_into_raster(
 
     // Step 1: Read the TIFF/BigTIFF header to get IFD location
     // Read first 64KB which should contain the IFD for COG files
-    let header_bytes = if header_cache_path.exists() {
+    let header_bytes = if !client.frozen() && header_cache_path.exists() {
         std::fs::read(&header_cache_path)?
     } else {
         let bytes = fetch_range(client, url, 0, 65536)?;
         // Cache the header for future use
-        let _ = std::fs::write(&header_cache_path, &bytes);
+        if !client.frozen() {
+            let _ = std::fs::write(&header_cache_path, &bytes);
+        }
         bytes
     };
 
@@ -609,6 +645,9 @@ fn read_esa_tile_into_raster(
         for itx in itile_min_x..=itile_max_x {
             let tile_index = (ity * tiles_across + itx) as usize;
             if tile_index >= cog.tile_offsets.len() || tile_index >= cog.tile_byte_counts.len() {
+                if client.frozen() {
+                    return Err("Missing frozen ESA tile layout".into());
+                }
                 continue;
             }
 
@@ -616,6 +655,9 @@ fn read_esa_tile_into_raster(
             let byte_count = cog.tile_byte_counts[tile_index];
 
             if offset == 0 || byte_count == 0 {
+                if client.frozen() {
+                    return Err("Missing frozen ESA tile data".into());
+                }
                 continue; // Empty/missing tile
             }
 
@@ -627,17 +669,31 @@ fn read_esa_tile_into_raster(
                 ity
             ));
 
-            let compressed_data = if tile_cache_file.exists() {
+            let compressed_data = if !client.frozen() && tile_cache_file.exists() {
                 std::fs::read(&tile_cache_file)?
             } else {
                 let data = fetch_range(client, url, offset, byte_count)?;
-                let _ = std::fs::write(&tile_cache_file, &data);
+                if !client.frozen() {
+                    let _ = std::fs::write(&tile_cache_file, &data);
+                }
                 data
             };
 
             // Decompress the tile
-            let pixel_count = (cog.tile_width * cog.tile_height) as usize;
-            let pixels = decompress_tile(&compressed_data, pixel_count, cog.compression)?;
+            let pixel_count = (cog.tile_width as usize)
+                .checked_mul(cog.tile_height as usize)
+                .ok_or("ESA tile size overflow")?;
+            if client.frozen() && pixel_count > 16 * 1024 * 1024 {
+                return Err("ESA tile exceeds decoded bound".into());
+            }
+            let pixels = if client.frozen() {
+                decompress_frozen_tile(&compressed_data, pixel_count, cog.compression)?
+            } else {
+                decompress_tile(&compressed_data, pixel_count, cog.compression)?
+            };
+            if client.frozen() && pixels.len() != pixel_count {
+                return Err("Incomplete frozen ESA tile".into());
+            }
 
             // Step 7: Copy the overlapping rows into the raster
             let tile_pixel_x0 = itx * cog.tile_width;
@@ -670,12 +726,28 @@ fn read_esa_tile_into_raster(
 
 /// Fetch a byte range from a URL via HTTP Range request.
 fn fetch_range(
-    client: &reqwest::blocking::Client,
+    client: &EsaSource<'_>,
     url: &str,
     start: u64,
     length: u64,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
-    let end = start + length - 1;
+    let end = start
+        .checked_add(length.checked_sub(1).ok_or("Empty ESA range")?)
+        .ok_or("ESA range overflow")?;
+    let client = match client {
+        EsaSource::Frozen(sources) => {
+            if length > 64 * 1024 * 1024 {
+                return Err("ESA range exceeds 64 MiB bound".into());
+            }
+            let bytes =
+                sources.resolve("land_cover", &format!("{url}#bytes={start}-{end}"), length)?;
+            if bytes.len() as u64 != length {
+                return Err("Frozen ESA range length mismatch".into());
+            }
+            return Ok(bytes);
+        }
+        EsaSource::Live(client) => client,
+    };
     let response = client
         .get(url)
         .header("Range", format!("bytes={start}-{end}"))
@@ -689,6 +761,41 @@ fn fetch_range(
     }
 
     Ok(response.bytes()?.to_vec())
+}
+
+fn decompress_frozen_tile(
+    data: &[u8],
+    expected: usize,
+    compression: u16,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    if expected > 16 * 1024 * 1024 {
+        return Err("ESA tile exceeds decoded bound".into());
+    }
+    if compression == 1 && data.len() != expected {
+        return Err("Incomplete or oversized frozen ESA uncompressed tile".into());
+    }
+    let pixels = if matches!(compression, 8 | 32946) {
+        let mut bytes = Vec::new();
+        let result = if data.first() == Some(&0x78) {
+            flate2::read::ZlibDecoder::new(data)
+                .take(expected as u64 + 1)
+                .read_to_end(&mut bytes)
+        } else {
+            DeflateDecoder::new(data)
+                .take(expected as u64 + 1)
+                .read_to_end(&mut bytes)
+        };
+        result?;
+        bytes
+    } else if compression == 5 {
+        lzw_decompress_checked(data, expected, true)?
+    } else {
+        decompress_tile(data, expected, compression)?
+    };
+    if pixels.len() != expected {
+        return Err("Incomplete or oversized frozen ESA tile".into());
+    }
+    Ok(pixels)
 }
 
 /// Decompress a TIFF tile based on compression type.
@@ -736,7 +843,7 @@ fn decompress_tile(
 
 /// Parse a TIFF IFD (Image File Directory) to extract tile layout information.
 fn parse_ifd(
-    client: &reqwest::blocking::Client,
+    client: &EsaSource<'_>,
     url: &str,
     header_bytes: &[u8],
     ifd_offset: u64,
@@ -787,6 +894,17 @@ fn parse_ifd(
     };
 
     let entry_size = if is_bigtiff { 20 } else { 12 };
+    if client.frozen() {
+        let end = usize::try_from(entry_count)
+            .ok()
+            .and_then(|count| count.checked_mul(entry_size))
+            .and_then(|size| entries_start.checked_add(size))
+            .and_then(|end| end.checked_add(if is_bigtiff { 8 } else { 4 }))
+            .ok_or("Frozen ESA IFD length overflow")?;
+        if end > bytes.len() {
+            return Err("Incomplete frozen ESA IFD directory".into());
+        }
+    }
 
     for i in 0..entry_count {
         let entry_offset = entries_start + (i as usize * entry_size);
@@ -907,7 +1025,7 @@ fn read_ifd_value(
 /// need to be fetched via another HTTP Range request.
 #[allow(clippy::too_many_arguments)]
 fn read_ifd_array(
-    client: &reqwest::blocking::Client,
+    client: &EsaSource<'_>,
     url: &str,
     ifd_bytes: &[u8],
     header_bytes: &[u8],
@@ -926,7 +1044,13 @@ fn read_ifd_array(
         16 => 8, // LONG8
         _ => 4,
     };
-    let total_size = count as usize * elem_size;
+    let total_size = usize::try_from(count)
+        .ok()
+        .and_then(|n| n.checked_mul(elem_size))
+        .ok_or("ESA array size overflow")?;
+    if client.frozen() && total_size > 64 * 1024 * 1024 {
+        return Err("ESA array exceeds bound".into());
+    }
 
     // Check if the value fits inline
     let inline_capacity = if is_bigtiff { 8 } else { 4 };
@@ -951,7 +1075,11 @@ fn read_ifd_array(
         // The array offset is always an absolute file offset
         let abs_offset = array_offset;
 
-        if (abs_offset as usize) + total_size <= header_bytes.len() {
+        if usize::try_from(abs_offset)
+            .ok()
+            .and_then(|v| v.checked_add(total_size))
+            .is_some_and(|end| end <= header_bytes.len())
+        {
             // Data is in the initial header read
             data_ref = header_bytes;
             data_start = abs_offset as usize;
@@ -1345,6 +1473,14 @@ fn lzw_decompress(
     data: &[u8],
     expected_size: usize,
 ) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    lzw_decompress_checked(data, expected_size, false)
+}
+
+fn lzw_decompress_checked(
+    data: &[u8],
+    expected_size: usize,
+    strict: bool,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     // TIFF LZW uses MSB-first bit packing with min code size of 8
     let min_code_size: u32 = 8;
     let clear_code: u32 = 1 << min_code_size; // 256
@@ -1369,6 +1505,9 @@ fn lzw_decompress(
     let mut prev_entry: Option<Vec<u8>> = None;
 
     loop {
+        if strict && bit_pos + code_size as usize > data.len() * 8 {
+            return Err("Frozen LZW ended before EOI".into());
+        }
         // Read next code (MSB-first)
         let code = read_bits_msb(data, bit_pos, code_size as usize);
         bit_pos += code_size as usize;
@@ -1384,7 +1523,13 @@ fn lzw_decompress(
             continue;
         }
 
-        if code == eoi_code || output.len() >= expected_size {
+        if code == eoi_code {
+            if strict && output.len() != expected_size {
+                return Err("Incomplete frozen LZW pixels".into());
+            }
+            break;
+        }
+        if !strict && output.len() >= expected_size {
             break;
         }
 
@@ -1397,12 +1542,26 @@ fn lzw_decompress(
                 e.push(prev[0]);
                 e
             } else {
+                if strict {
+                    return Err("Invalid frozen LZW initial code".into());
+                }
                 break;
             }
         } else {
+            if strict {
+                return Err("Invalid frozen LZW dictionary code".into());
+            }
             break; // Invalid code
         };
 
+        if strict
+            && output
+                .len()
+                .checked_add(entry.len())
+                .is_none_or(|n| n > expected_size)
+        {
+            return Err("Frozen LZW exceeds decoded pixel bound".into());
+        }
         output.extend_from_slice(&entry);
 
         if let Some(ref prev) = prev_entry {
@@ -1420,7 +1579,9 @@ fn lzw_decompress(
         prev_entry = Some(entry);
     }
 
-    output.truncate(expected_size);
+    if !strict {
+        output.truncate(expected_size);
+    }
     Ok(output)
 }
 
@@ -1488,5 +1649,141 @@ mod smoothing_scale_tests {
             corner_cut_area_m2(400, 0.1) > 0.0,
             "a coarse grid must still round the corners"
         );
+    }
+}
+
+#[cfg(test)]
+mod frozen_tests {
+    use super::*;
+    #[test]
+    fn frozen_esa_requires_complete_latitude_coverage_before_requests() {
+        let (_dir, sources) =
+            crate::tiler_contract::frozen_tests::fixture("land_cover", "unused", b"data");
+        for (south, north) in [
+            (-60.01, -59.99),
+            (83.99, 84.01),
+            (-70.0, -69.0),
+            (85.0, 86.0),
+            (83.99, 84.0),
+        ] {
+            let bbox = LLBBox::new(south, 0.0, north, 0.01).unwrap();
+            let error = fetch_land_cover_data_with_sources(&bbox, 2, 2, Some(&sources))
+                .err()
+                .unwrap();
+            assert!(
+                error.to_string().contains("complete ESA latitude coverage"),
+                "{south}..{north}: {error}"
+            );
+        }
+        for (south, north) in [(-60.0, -59.99), (83.98, 83.99), (40.0, 40.01)] {
+            let bbox = LLBBox::new(south, 0.0, north, 0.01).unwrap();
+            let error = fetch_land_cover_data_with_sources(&bbox, 2, 2, Some(&sources))
+                .err()
+                .unwrap();
+            assert!(
+                error.to_string().contains("Unlisted frozen source"),
+                "{south}..{north}: {error}"
+            );
+        }
+    }
+    #[test]
+    fn frozen_ranges_are_exact_and_missing_ranges_never_use_http() {
+        let (_dir, sources) = crate::tiler_contract::frozen_tests::fixture(
+            "land_cover",
+            "https://invalid.invalid/tif#bytes=8-11",
+            b"data",
+        );
+        let client = EsaSource::Frozen(&sources);
+        assert_eq!(
+            fetch_range(&client, "https://invalid.invalid/tif", 8, 4).unwrap(),
+            b"data"
+        );
+        assert!(fetch_range(&client, "https://invalid.invalid/tif", 8, 3).is_err());
+        assert!(fetch_range(&client, "https://invalid.invalid/tif", u64::MAX, 4).is_err());
+        assert!(fetch_range(&client, "https://invalid.invalid/tif", 0, 0).is_err());
+    }
+    #[test]
+    fn frozen_esa_ignores_existing_cache_and_fails_closed() {
+        let (dir, sources) =
+            crate::tiler_contract::frozen_tests::fixture("land_cover", "unused", b"data");
+        let cache = dir.path().join("cache");
+        std::fs::create_dir(&cache).unwrap();
+        let cached = cache.join("test_header.bin");
+        std::fs::write(&cached, b"existing cache must survive").unwrap();
+        let bbox = LLBBox::new(40.7, -74.0, 40.70001, -73.99999).unwrap();
+        let error = read_esa_tile_into_raster(
+            &EsaSource::Frozen(&sources),
+            "https://invalid.invalid/test.tif",
+            &cache,
+            39.0,
+            -75.0,
+            &bbox,
+            &mut None,
+        )
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("Unlisted frozen source"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read(cached).unwrap(),
+            b"existing cache must survive"
+        );
+        assert_eq!(std::fs::read_dir(cache).unwrap().count(), 1);
+        assert!(fetch_land_cover_data_with_sources(&bbox, 2, 2, Some(&sources)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod frozen_decode_tests {
+    use super::*;
+    fn pack_codes(codes: &[u16]) -> Vec<u8> {
+        let mut bytes = vec![0; (codes.len() * 9).div_ceil(8)];
+        for (i, &code) in codes.iter().enumerate() {
+            for bit in 0..9 {
+                if code & (1 << (8 - bit)) != 0 {
+                    bytes[(i * 9 + bit) / 8] |= 1 << (7 - (i * 9 + bit) % 8);
+                }
+            }
+        }
+        bytes
+    }
+    #[test]
+    fn frozen_lzw_rejects_excess_pixels_invalid_codes_and_missing_eoi() {
+        let valid = pack_codes(&[256, 10, 10, 10, 10, 257]);
+        assert_eq!(decompress_frozen_tile(&valid, 4, 5).unwrap(), [10; 4]);
+        let excess = pack_codes(&[256, 10, 10, 10, 10, 10, 257]);
+        assert!(decompress_frozen_tile(&excess, 4, 5).is_err());
+        let truncated = pack_codes(&[256, 10, 10, 10, 10]);
+        assert!(decompress_frozen_tile(&truncated, 4, 5).is_err());
+        let invalid = pack_codes(&[256, 511, 257]);
+        assert!(decompress_frozen_tile(&invalid, 4, 5).is_err());
+    }
+    #[test]
+    fn frozen_ifd_rejects_incomplete_declared_directory() {
+        let (_dir, sources) =
+            crate::tiler_contract::frozen_tests::fixture("land_cover", "unused", b"data");
+        let mut header = vec![0; 65536];
+        header[8..10].copy_from_slice(&6000u16.to_le_bytes());
+        assert!(parse_ifd(
+            &EsaSource::Frozen(&sources),
+            "unused",
+            &header,
+            8,
+            false,
+            false
+        )
+        .is_err());
+    }
+    #[test]
+    fn frozen_decoder_rejects_short_and_oversized_deflate() {
+        use std::io::Write;
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(&vec![10; 10000]).unwrap();
+        let bytes = encoder.finish().unwrap();
+        assert!(decompress_frozen_tile(&bytes, 8, 8).is_err());
+        assert!(decompress_frozen_tile(&[10], 8, 1).is_err());
+        assert_eq!(decompress_frozen_tile(&[10; 8], 8, 1).unwrap(), vec![10; 8]);
     }
 }

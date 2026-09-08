@@ -111,6 +111,8 @@ def smoke(candidate, stock=None):
 
         osm = encoded({"elements": []})
         (root / "osm.json").write_bytes(osm)
+        climate = (ROOT / "assets/climate/koppen_0p1.bin").read_bytes()
+        (root / "koppen_0p1.bin").write_bytes(climate)
         profile_hash = hashlib.sha256(
             encoded(json.loads((ROOT / "docs/contracts/tiler-profile.json").read_text()))
         ).hexdigest()
@@ -125,7 +127,14 @@ def smoke(candidate, stock=None):
                         "path": "osm.json",
                         "sha256": hashlib.sha256(osm).hexdigest(),
                         "size_bytes": len(osm),
-                    }
+                    },
+                    {
+                        "kind": "climate",
+                        "key": "koppen_0p1.bin",
+                        "path": "koppen_0p1.bin",
+                        "sha256": hashlib.sha256(climate).hexdigest(),
+                        "size_bytes": len(climate),
+                    },
                 ],
             }
         )
