@@ -294,7 +294,7 @@ mod capability_tests {
         );
     }
     #[test]
-    fn capability_report_has_exact_source_and_no_unimplemented_claims() {
+    fn capability_report_has_exact_source_identity() {
         let report = capability_report();
         assert_eq!(
             report["upstream"]["commit"],
@@ -302,7 +302,32 @@ mod capability_tests {
         );
         assert_eq!(report["schema_version"], 1);
         assert_eq!(report["build"]["commit"].as_str().unwrap().len(), 40);
-        assert!(report["capabilities"].as_array().unwrap().is_empty());
+        assert!(report["build"]["dirty"].is_boolean());
+        assert!(report["build"]["target"].is_string());
+        assert!(report["build"]["rustc"].is_string());
+    }
+    #[test]
+    fn candidate_report_advertises_only_audited_abi_mechanisms() {
+        let report = capability_report();
+        assert_eq!(
+            report["capabilities"],
+            serde_json::json!([
+                "master_grid_save",
+                "fetch_only",
+                "master_grid_slice",
+                "tile_master_offset",
+                "tile_dimension_override",
+                "tiled_postprocess",
+                "skip_railways",
+                "no_ores",
+                "suppress_tile_metadata"
+            ])
+        );
+        assert_eq!(report["profile"], PROFILE);
+        assert_eq!(report["ore_policy"], "no-ores-skips-all-fillground-veins");
+        // These are native renderer outputs, before the consumer's 1.20.1 conversion.
+        assert_eq!(report["java"]["minecraft_version"], "1.21.1");
+        assert_eq!(report["java"]["data_version"], 3955);
     }
 }
 
@@ -331,8 +356,8 @@ pub fn capability_report() -> serde_json::Value {
         "target": env!("ARNIS_BUILD_TARGET"),
         "rustc": env!("ARNIS_BUILD_RUSTC"),
     });
-    // A partial development build must not pass the consumer's full capability schema.
-    report["capabilities"] = serde_json::json!([]);
+    // The template lists audited ABI mechanisms, not consumer trust or release qualification.
+    // Keep the exact-list regression in sync with reviewed implementation evidence.
     report
 }
 

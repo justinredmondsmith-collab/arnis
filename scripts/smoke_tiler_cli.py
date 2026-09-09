@@ -111,7 +111,18 @@ def smoke(candidate, stock=None):
         assert query.returncode == 0 and not query.stderr, query.stderr
         report = json.loads(query.stdout)
         assert report["upstream"]["commit"] == "3918513acb4e5e9ef4332418531a7c444d2b5acf"
-        assert not report["capabilities"], "development smoke must not imply qualification"
+        # Candidate ABI claims are separate from consumer trust and qualification.
+        assert report["capabilities"] == [
+            "master_grid_save",
+            "fetch_only",
+            "master_grid_slice",
+            "tile_master_offset",
+            "tile_dimension_override",
+            "tiled_postprocess",
+            "skip_railways",
+            "no_ores",
+            "suppress_tile_metadata",
+        ], "unexpected candidate ABI claims"
         assert not list(root.iterdir()), "capability query had filesystem side effects"
         for args in [
             ["--tiler-capabilities=true"],
