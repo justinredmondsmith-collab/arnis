@@ -25,7 +25,7 @@ use crate::block_definitions::{
 use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
 use crate::element_processing::bridges::BridgeSurfaceMap;
 use crate::element_processing::tree;
-use crate::floodfill_cache::BuildingFootprintBitmap;
+use crate::floodfill_cache::{BuildingFootprintBitmap, CoordinateBitmap};
 use crate::ground::Ground;
 use crate::land_cover;
 use crate::progress::emit_gui_progress_update;
@@ -192,6 +192,36 @@ pub fn generate_ground_region(
     let terrain_enabled = ground.elevation_enabled;
     let climate = ground.climate();
 
+    // Freeze OSM-era obstacles before any ESA column can place a canopy at
+    // another candidate's ground + 1. Sampling once for the entire invocation
+    // prevents an uphill chain of tree admissions from exceeding the read halo.
+    // One bit per iteration cell: at most 2 MiB under the admitted profile cap.
+    let pre_esa_obstacles = if has_land_cover
+        && editor.tiler_owns_bathymetry()
+        && editor.master_geometry().is_some()
+        && iter_min_x <= iter_max_x
+        && iter_min_z <= iter_max_z
+    {
+        let bounds = XZBBox::rect_from_min_max(iter_min_x, iter_min_z, iter_max_x, iter_max_z)
+            .expect("nonempty ground iteration bounds");
+        let mut obstacles = CoordinateBitmap::new(&bounds);
+        for x in iter_min_x..=iter_max_x {
+            for z in iter_min_z..=iter_max_z {
+                let y = if terrain_enabled {
+                    editor.get_ground_level(x, z)
+                } else {
+                    args.ground_level
+                };
+                if editor.block_exists_absolute(x, y + 1, z) {
+                    obstacles.set(x, z);
+                }
+            }
+        }
+        Some(obstacles)
+    } else {
+        None
+    };
+
     let total_blocks: u64 =
         (iter_max_x - iter_min_x + 1).max(0) as u64 * (iter_max_z - iter_min_z + 1).max(0) as u64;
     let desired_updates: u64 = 1500;
@@ -316,6 +346,10 @@ pub fn generate_ground_region(
 
             for x in chunk_min_x..=chunk_max_x {
                 for z in chunk_min_z..=chunk_max_z {
+                    // Pattern decisions share the admitted master cell; writes and
+                    // occupancy queries remain in the editor's local coordinates.
+                    // Without master geometry this is the stock identity mapping.
+                    let (pattern_x, pattern_z) = editor.master_coordinates(x, z);
                     // Skip blocks outside the rotated original bounding box
                     if !ground.is_in_rotated_bounds(x, z) {
                         block_counter += 1;
@@ -507,7 +541,7 @@ pub fn generate_ground_region(
                                         // Sheer cliff: each column is 100% one material
                                         // so the downward under-fill matches the surface,
                                         // producing vertical stripes of cobbled/deepslate.
-                                        let h = land_cover::coord_hash(x, z);
+                                        let h = land_cover::coord_hash(pattern_x, pattern_z);
                                         if h.is_multiple_of(2) {
                                             (COBBLED_DEEPSLATE, COBBLED_DEEPSLATE)
                                         } else {
@@ -518,7 +552,7 @@ pub fn generate_ground_region(
                                         // weathered cobblestone chunks and occasional
                                         // andesite banding. Deepslate stays below-surface
                                         // only — it would read as "cliff" if exposed here.
-                                        let h = land_cover::coord_hash(x, z) % 20;
+                                        let h = land_cover::coord_hash(pattern_x, pattern_z) % 20;
                                         if h < 12 {
                                             (STONE, DEEPSLATE) // 60%
                                         } else if h < 17 {
@@ -531,7 +565,7 @@ pub fn generate_ground_region(
                                         // the gravel is a minority patch (not the whole
                                         // surface) so it looks like real scree rather
                                         // than a grey slope.
-                                        let h = land_cover::coord_hash(x, z) % 12;
+                                        let h = land_cover::coord_hash(pattern_x, pattern_z) % 12;
                                         match h {
                                             0..=3 => (ANDESITE, STONE),    // 33%
                                             4..=5 => (TUFF, STONE),        // 17%
@@ -540,7 +574,9 @@ pub fn generate_ground_region(
                                             _ => (GRAVEL, STONE),          // 17% scree
                                         }
                                     }
-                                } else if let Some(p) = climate.surface_palette(cover, x, z) {
+                                } else if let Some(p) =
+                                    climate.surface_palette(cover, pattern_x, pattern_z)
+                                {
                                     p
                                 } else {
                                     // Select surface block based on ESA land cover class
@@ -556,8 +592,8 @@ pub fn generate_ground_region(
                                             // hash adds occasional grass peek-through
                                             // inside each blob so they don't look
                                             // stamped.
-                                            let noise = value_noise_01(x, z, 5);
-                                            let h = land_cover::coord_hash(x, z);
+                                            let noise = value_noise_01(pattern_x, pattern_z, 5);
+                                            let h = land_cover::coord_hash(pattern_x, pattern_z);
                                             // Threshold 0.4 yields roughly 20 % dirt
                                             // coverage (value noise from uniform
                                             // samples concentrates around 0.5, so 0.4
@@ -575,7 +611,8 @@ pub fn generate_ground_region(
                                         land_cover::LC_GRASSLAND => (GRASS_BLOCK, DIRT),
                                         land_cover::LC_CROPLAND => (FARMLAND, DIRT),
                                         land_cover::LC_BUILT_UP => {
-                                            let h = land_cover::coord_hash(x, z) % 100;
+                                            let h =
+                                                land_cover::coord_hash(pattern_x, pattern_z) % 100;
                                             if h < 72 {
                                                 (STONE_BRICKS, STONE)
                                             } else if h < 87 {
@@ -614,8 +651,9 @@ pub fn generate_ground_region(
                                                 // stands out against grey rock), then
                                                 // a finer per-block hash picks the
                                                 // specific block within each zone.
-                                                let noise = value_noise_01(x, z, 6);
-                                                let h = land_cover::coord_hash(x, z);
+                                                let noise = value_noise_01(pattern_x, pattern_z, 6);
+                                                let h =
+                                                    land_cover::coord_hash(pattern_x, pattern_z);
                                                 // Threshold 0.45 → roughly 30 % dirt
                                                 // coverage given the bell-shaped
                                                 // distribution of bilinear-interpolated
@@ -648,14 +686,14 @@ pub fn generate_ground_region(
                                 // to plain grass for the ≤4 slopes (no ESA
                                 // class to pick instead).
                                 if slope > 8 {
-                                    let h = land_cover::coord_hash(x, z);
+                                    let h = land_cover::coord_hash(pattern_x, pattern_z);
                                     if h.is_multiple_of(2) {
                                         (COBBLED_DEEPSLATE, COBBLED_DEEPSLATE)
                                     } else {
                                         (DEEPSLATE, DEEPSLATE)
                                     }
                                 } else if slope > 6 {
-                                    let h = land_cover::coord_hash(x, z) % 20;
+                                    let h = land_cover::coord_hash(pattern_x, pattern_z) % 20;
                                     if h < 12 {
                                         (STONE, DEEPSLATE)
                                     } else if h < 17 {
@@ -664,7 +702,7 @@ pub fn generate_ground_region(
                                         (ANDESITE, DEEPSLATE)
                                     }
                                 } else if slope > 4 {
-                                    let h = land_cover::coord_hash(x, z) % 12;
+                                    let h = land_cover::coord_hash(pattern_x, pattern_z) % 12;
                                     match h {
                                         0..=3 => (ANDESITE, STONE),
                                         4..=5 => (TUFF, STONE),
@@ -778,12 +816,15 @@ pub fn generate_ground_region(
                             // water (placed block or ESA-classified, e.g. a steep
                             // lake edge where rock sits at ground_y). Pre-existing
                             // flat OSM stone is intentionally left uncapped here.
+                            let mut snow_capped = false;
                             if snow_threshold_y != i32::MAX
                                 && !surface_is_water
                                 && water_blend <= 0.5
                             {
-                                let edge = (value_noise_01(x, z, 8) - 0.5) * SNOW_EDGE_JITTER;
+                                let edge = (value_noise_01(pattern_x, pattern_z, 8) - 0.5)
+                                    * SNOW_EDGE_JITTER;
                                 if ground_y as f64 >= snow_threshold_y as f64 + edge {
+                                    snow_capped = true;
                                     editor.set_block_if_absent_absolute(
                                         SNOW_LAYER,
                                         x,
@@ -853,7 +894,7 @@ pub fn generate_ground_region(
                                 }
                                 let floor_y = water_bottom - 1;
                                 if floor_y > min_y() {
-                                    let h = land_cover::coord_hash(x, z);
+                                    let h = land_cover::coord_hash(pattern_x, pattern_z);
                                     let floor_block = match h % 5 {
                                         0 => GRAVEL,
                                         1 => CLAY,
@@ -922,9 +963,15 @@ pub fn generate_ground_region(
                                     Some(bridge_surface),
                                 );
                             }
-                            if has_land_cover && !editor.block_exists_absolute(x, ground_y + 1, z) {
+                            if has_land_cover
+                                && !pre_esa_obstacles.as_ref().map_or_else(
+                                    || editor.block_exists_absolute(x, ground_y + 1, z),
+                                    |obstacles| obstacles.contains(x, z) || snow_capped,
+                                )
+                            {
                                 let cover = ground.cover_class(coord);
-                                let mut rng = crate::deterministic_rng::coord_rng(x, z, 0);
+                                let mut rng =
+                                    crate::deterministic_rng::coord_rng(pattern_x, pattern_z, 0);
 
                                 match cover {
                                     land_cover::LC_TREE_COVER
@@ -1669,3 +1716,7 @@ mod tiler_water_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "ground_generation_master_tests.rs"]
+mod master_pattern_tests;
