@@ -948,7 +948,11 @@ fn generate_rail_tunnel_shell(
                             POLISHED_DEEPSLATE
                         } else if is_wall_or_ceiling {
                             // Visible wall/ceiling: mix in cracked and mossy
-                            rail_tunnel_shell_block(bx + dx, y, bz + dz)
+                            {
+                                let (pattern_x, pattern_z) =
+                                    editor.master_coordinates(bx + dx, bz + dz);
+                                rail_tunnel_shell_block(pattern_x, y, pattern_z)
+                            }
                         } else {
                             // Interior placeholder (carved in phase 2)
                             STONE_BRICKS

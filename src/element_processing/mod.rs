@@ -15,6 +15,8 @@ pub mod historic;
 pub mod landuse;
 pub mod leisure;
 pub mod man_made;
+#[cfg(test)]
+mod master_vegetation_tests;
 pub mod natural;
 pub mod power;
 pub mod railways;
