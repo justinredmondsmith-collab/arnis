@@ -1,0 +1,1654 @@
+{
+  "schema": "arnis-tiler/checkpoint/vegetation-patterns/1",
+  "release_qualified": false,
+  "upstream": {
+    "tag": "v3.1.0",
+    "commit": "3918513acb4e5e9ef4332418531a7c444d2b5acf"
+  },
+  "renderer_source_commit": "234643437ee5e5780ce14bf711a41e98cefe4af9",
+  "renderer_binary_sha256": "5672cfbc38e14e3941fd0ef3f8abfc04f20f8d9f4ff88d1fea8c6b0c47262459",
+  "profile_sha256": "02e80bc12bdc17483b94031ca1f78a842371226c8f997909f8fded5adfe2f81b",
+  "supervision_policy_sha256": "0908c69e9d870a75ff6e267f74672954794be24872e229d0297123d833880208",
+  "scenes": [
+    {
+      "scene": "water_vegetation",
+      "width": 85,
+      "height": 112,
+      "core_blocks": 64,
+      "source_sha256": "2619d49987568954ef0f9e43d83d2718e2256fd6aa48904fe1f7e41de8cb7acc",
+      "master_sha256": "ef9c47acaccf0d60a05b1d60ea9c66c676dbef40b842d1250b1c90df4ace2d04",
+      "plan_sha256": "6a8372d849d027f03331d1f8a9cd27dac854275f59fc87b62eac88f7b5d56dc7",
+      "whole_content_sha256": "0f03efc6cf950c205a77f27622e3a5335d290222a83dd3a2a94cb39d98cb2df2",
+      "tiled_content_sha256": "0f03efc6cf950c205a77f27622e3a5335d290222a83dd3a2a94cb39d98cb2df2",
+      "before_differing_blocks": 4337,
+      "after_differing_blocks": 0,
+      "after_other_chunk_differences": 0
+    },
+    {
+      "scene": "built",
+      "width": 85,
+      "height": 112,
+      "core_blocks": 64,
+      "source_sha256": "6bd0832ecfc63c4ac5bd1d03b6ab29c8c9b0894a20bc5f2135ebcd2b8e81e02d",
+      "master_sha256": "a911b51f30af8c317abf208134aefa8e8cb1a07de044195f95a57373141734fc",
+      "plan_sha256": "6a8372d849d027f03331d1f8a9cd27dac854275f59fc87b62eac88f7b5d56dc7",
+      "whole_content_sha256": "4d9c9a9870fab71d83d901a400a56c09f953cea08728318573155cb489b5de79",
+      "tiled_content_sha256": "4d9c9a9870fab71d83d901a400a56c09f953cea08728318573155cb489b5de79",
+      "before_differing_blocks": 0,
+      "after_differing_blocks": 0,
+      "after_other_chunk_differences": 0
+    },
+    {
+      "scene": "fields_parking",
+      "width": 85,
+      "height": 112,
+      "core_blocks": 64,
+      "source_sha256": "ef1718505ff11cd16e319743df2ef462b20eef41b4d42e118977e1ceeea27746",
+      "master_sha256": "8bb9e321141305e91f0205c9b2fc1431102394102d360943d5e028702d49b4e6",
+      "plan_sha256": "6a8372d849d027f03331d1f8a9cd27dac854275f59fc87b62eac88f7b5d56dc7",
+      "whole_content_sha256": "d7b587f7e7b4311731a73756b49fc155393aed031f664c749967fe3bacfc1c28",
+      "tiled_content_sha256": "d7b587f7e7b4311731a73756b49fc155393aed031f664c749967fe3bacfc1c28",
+      "before_differing_blocks": 3428,
+      "after_differing_blocks": 0,
+      "after_other_chunk_differences": 0
+    },
+    {
+      "scene": "natural_patterns",
+      "width": 85,
+      "height": 112,
+      "core_blocks": 64,
+      "source_sha256": "c183001aab9929bb57e6aceab9c1f2a55e7df18a0c7c3d4a065917011bc98fde",
+      "master_sha256": "36f1c0a022938c93d7350ca3f3f78e44630e9f0fb7c4bae817092ccecf3a89ed",
+      "plan_sha256": "6a8372d849d027f03331d1f8a9cd27dac854275f59fc87b62eac88f7b5d56dc7",
+      "whole_content_sha256": "a4ec8fcaeebc30ab0400ad49baf8233db3f75cd13ba48a8170623b7e7edc25dc",
+      "tiled_content_sha256": "a4ec8fcaeebc30ab0400ad49baf8233db3f75cd13ba48a8170623b7e7edc25dc",
+      "before_differing_blocks": 8878,
+      "after_differing_blocks": 0,
+      "after_other_chunk_differences": 0
+    },
+    {
+      "scene": "leisure_patterns",
+      "width": 85,
+      "height": 112,
+      "core_blocks": 64,
+      "source_sha256": "8dbd940280c232f7f72e3cfcd4ac1938563f8de586951999d3d73ab2d380694b",
+      "master_sha256": "66ce4f1f50c5944ab4f16baf5095649280ae5fd26350dad7370e9e8951385597",
+      "plan_sha256": "6a8372d849d027f03331d1f8a9cd27dac854275f59fc87b62eac88f7b5d56dc7",
+      "whole_content_sha256": "f660d6223083497b5c0996d87b0f5d2a0a5b1c320a3089d8eaf6c0c01fd20444",
+      "tiled_content_sha256": "f660d6223083497b5c0996d87b0f5d2a0a5b1c320a3089d8eaf6c0c01fd20444",
+      "before_differing_blocks": 3252,
+      "after_differing_blocks": 0,
+      "after_other_chunk_differences": 0
+    },
+    {
+      "scene": "tunnel",
+      "width": 85,
+      "height": 112,
+      "core_blocks": 64,
+      "source_sha256": "81581f7fff3c049e15e15eb676ac2bb7c0d89a1da95550c82ad1c5b8f40c12d9",
+      "master_sha256": "89d27a0d507c1ac23603d58fb76effd0924883c969d8b6d5458293dbecc10b1f",
+      "plan_sha256": "6a8372d849d027f03331d1f8a9cd27dac854275f59fc87b62eac88f7b5d56dc7",
+      "whole_content_sha256": "9e299e1685184f4f16327e975f6eae57c30bf712ca4560a6f915fe320210b702",
+      "tiled_content_sha256": "9e299e1685184f4f16327e975f6eae57c30bf712ca4560a6f915fe320210b702",
+      "before_differing_blocks": 235,
+      "after_differing_blocks": 0,
+      "after_other_chunk_differences": 0
+    },
+    {
+      "scene": "rail_tunnel",
+      "width": 85,
+      "height": 112,
+      "core_blocks": 64,
+      "source_sha256": "082f0278a94223e4fb02a7dd89b8e270f2b9439d9350b7a4a3d257243e26ef21",
+      "master_sha256": "6e50c6d94d2d2778ff8b739181f8ddb788ba2ba07c5238f8ca6b89d1bd9f5618",
+      "plan_sha256": "6a8372d849d027f03331d1f8a9cd27dac854275f59fc87b62eac88f7b5d56dc7",
+      "whole_content_sha256": "aadef0e0370bbb8d975ec7ae580cc01e5072e448b20e2481452425458d964185",
+      "tiled_content_sha256": "aadef0e0370bbb8d975ec7ae580cc01e5072e448b20e2481452425458d964185",
+      "before_differing_blocks": 235,
+      "after_differing_blocks": 0,
+      "after_other_chunk_differences": 0
+    }
+  ],
+  "appearance_changes": [
+    {
+      "scene": "water_vegetation",
+      "baseline_whole_sha256": "2a9635a22ac845a9c0169a4f7f55a617d2331fba378d4e41d5abd333f7106960",
+      "candidate_whole_sha256": "0f03efc6cf950c205a77f27622e3a5335d290222a83dd3a2a94cb39d98cb2df2",
+      "changed_blocks": 7692,
+      "other_chunk_fields": [],
+      "block_pairs": [
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:air",
+          "count": 1670
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:oak_leaves",
+          "count": 1292
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:air",
+          "count": 931
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:spruce_leaves",
+          "count": 723
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:air",
+          "count": 393
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:short_grass",
+          "count": 362
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:birch_leaves",
+          "count": 357
+        },
+        {
+          "before": "minecraft:tall_grass",
+          "after": "minecraft:air",
+          "count": 185
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:air",
+          "count": 174
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:tall_grass",
+          "count": 171
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:azalea_leaves",
+          "count": 148
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:air",
+          "count": 138
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:spruce_log",
+          "count": 114
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:oak_log",
+          "count": 112
+        },
+        {
+          "before": "minecraft:birch_leaves",
+          "after": "minecraft:air",
+          "count": 102
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:birch_leaves",
+          "count": 83
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:air",
+          "count": 67
+        },
+        {
+          "before": "minecraft:mud",
+          "after": "minecraft:grass_block",
+          "count": 51
+        },
+        {
+          "before": "minecraft:grass_block",
+          "after": "minecraft:mud",
+          "count": 50
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:fern",
+          "count": 46
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:air",
+          "count": 42
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:spruce_leaves",
+          "count": 35
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:birch_log",
+          "count": 33
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:short_grass",
+          "count": 31
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:oak_leaves",
+          "count": 30
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:fern",
+          "count": 27
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:birch_leaves",
+          "count": 21
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:oak_log",
+          "count": 19
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:oak_leaves",
+          "count": 18
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:short_grass",
+          "count": 17
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:tall_grass",
+          "count": 17
+        },
+        {
+          "before": "minecraft:birch_log",
+          "after": "minecraft:air",
+          "count": 16
+        },
+        {
+          "before": "minecraft:birch_leaves",
+          "after": "minecraft:spruce_leaves",
+          "count": 16
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:azalea_leaves",
+          "count": 15
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:short_grass",
+          "count": 14
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:oak_leaves",
+          "count": 13
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:birch_leaves",
+          "count": 12
+        },
+        {
+          "before": "minecraft:tall_grass",
+          "after": "minecraft:short_grass",
+          "count": 11
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:birch_leaves",
+          "count": 9
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:birch_log",
+          "count": 8
+        },
+        {
+          "before": "minecraft:azure_bluet",
+          "after": "minecraft:air",
+          "count": 8
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:spruce_leaves",
+          "count": 7
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:air",
+          "count": 6
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:oak_leaves",
+          "count": 6
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:oak_log",
+          "count": 5
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:short_grass",
+          "count": 4
+        },
+        {
+          "before": "minecraft:blue_orchid",
+          "after": "minecraft:air",
+          "count": 4
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:poppy",
+          "count": 4
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:air",
+          "count": 4
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:short_grass",
+          "count": 4
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:azure_bluet",
+          "count": 3
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:short_grass",
+          "count": 3
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:blue_orchid",
+          "count": 3
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:azure_bluet",
+          "count": 3
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:spruce_log",
+          "count": 3
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:oak_leaves",
+          "count": 3
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:azalea_leaves",
+          "count": 3
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:short_grass",
+          "count": 3
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:blue_orchid",
+          "count": 2
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:fern",
+          "count": 2
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:oak_log",
+          "count": 2
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:dandelion",
+          "count": 2
+        },
+        {
+          "before": "minecraft:blue_orchid",
+          "after": "minecraft:short_grass",
+          "count": 2
+        },
+        {
+          "before": "minecraft:azure_bluet",
+          "after": "minecraft:short_grass",
+          "count": 2
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:azalea_leaves",
+          "count": 2
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:spruce_log",
+          "count": 2
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:fern",
+          "count": 2
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:birch_log",
+          "count": 2
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:birch_log",
+          "count": 2
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:spruce_log",
+          "count": 2
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:blue_orchid",
+          "count": 1
+        },
+        {
+          "before": "minecraft:azure_bluet",
+          "after": "minecraft:azalea_leaves",
+          "count": 1
+        },
+        {
+          "before": "minecraft:blue_orchid",
+          "after": "minecraft:fern",
+          "count": 1
+        },
+        {
+          "before": "minecraft:birch_log",
+          "after": "minecraft:short_grass",
+          "count": 1
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:dandelion",
+          "count": 1
+        },
+        {
+          "before": "minecraft:birch_leaves",
+          "after": "minecraft:oak_log",
+          "count": 1
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:oak_log",
+          "count": 1
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:azure_bluet",
+          "count": 1
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:oak_log",
+          "count": 1
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:fern",
+          "count": 1
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:blue_orchid",
+          "count": 1
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:poppy",
+          "count": 1
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:fern",
+          "count": 1
+        },
+        {
+          "before": "minecraft:azure_bluet",
+          "after": "minecraft:dandelion",
+          "count": 1
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:birch_leaves",
+          "count": 1
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:oak_leaves",
+          "count": 1
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:poppy",
+          "count": 1
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:oak_leaves",
+          "count": 1
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:spruce_leaves",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "scene": "built",
+      "baseline_whole_sha256": "3c6f680af331b76377ad5a8f15691c726f32534e9076ee530f1483dc105e41c1",
+      "candidate_whole_sha256": "4d9c9a9870fab71d83d901a400a56c09f953cea08728318573155cb489b5de79",
+      "changed_blocks": 377,
+      "other_chunk_fields": [],
+      "block_pairs": [
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:jungle_leaves",
+          "count": 120
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:spruce_leaves",
+          "count": 82
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:air",
+          "count": 51
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:short_grass",
+          "count": 49
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:jungle_log",
+          "count": 13
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:air",
+          "count": 8
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:dandelion",
+          "count": 7
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:fern",
+          "count": 6
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:air",
+          "count": 6
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:spruce_log",
+          "count": 6
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:oak_leaves",
+          "count": 5
+        },
+        {
+          "before": "minecraft:blue_orchid",
+          "after": "minecraft:air",
+          "count": 4
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:blue_orchid",
+          "count": 4
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:poppy",
+          "count": 3
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:air",
+          "count": 2
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:azure_bluet",
+          "count": 2
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:fern",
+          "count": 2
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:spruce_log",
+          "count": 1
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:short_grass",
+          "count": 1
+        },
+        {
+          "before": "minecraft:azure_bluet",
+          "after": "minecraft:air",
+          "count": 1
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:poppy",
+          "count": 1
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:oak_leaves",
+          "count": 1
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:azure_bluet",
+          "count": 1
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:air",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "scene": "fields_parking",
+      "baseline_whole_sha256": "a49b4156b151433045022afc8764bb34481103b3c9766fd2e6b4fd1ffdd0f5ac",
+      "candidate_whole_sha256": "d7b587f7e7b4311731a73756b49fc155393aed031f664c749967fe3bacfc1c28",
+      "changed_blocks": 3386,
+      "other_chunk_fields": [],
+      "block_pairs": [
+        {
+          "before": "minecraft:wheat",
+          "after": "minecraft:carrots",
+          "count": 375
+        },
+        {
+          "before": "minecraft:potatoes",
+          "after": "minecraft:carrots",
+          "count": 345
+        },
+        {
+          "before": "minecraft:carrots",
+          "after": "minecraft:potatoes",
+          "count": 345
+        },
+        {
+          "before": "minecraft:wheat",
+          "after": "minecraft:potatoes",
+          "count": 342
+        },
+        {
+          "before": "minecraft:carrots",
+          "after": "minecraft:wheat",
+          "count": 338
+        },
+        {
+          "before": "minecraft:potatoes",
+          "after": "minecraft:wheat",
+          "count": 336
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:oak_leaves",
+          "count": 327
+        },
+        {
+          "before": "minecraft:birch_leaves",
+          "after": "minecraft:air",
+          "count": 190
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:air",
+          "count": 149
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:short_grass",
+          "count": 126
+        },
+        {
+          "before": "minecraft:jungle_leaves",
+          "after": "minecraft:air",
+          "count": 111
+        },
+        {
+          "before": "minecraft:acacia_leaves",
+          "after": "minecraft:air",
+          "count": 100
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:air",
+          "count": 75
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:oak_log",
+          "count": 26
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:air",
+          "count": 17
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:air",
+          "count": 15
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:fern",
+          "count": 15
+        },
+        {
+          "before": "minecraft:jungle_log",
+          "after": "minecraft:air",
+          "count": 14
+        },
+        {
+          "before": "minecraft:birch_log",
+          "after": "minecraft:air",
+          "count": 14
+        },
+        {
+          "before": "minecraft:acacia_log",
+          "after": "minecraft:air",
+          "count": 11
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:potatoes",
+          "count": 9
+        },
+        {
+          "before": "minecraft:potatoes",
+          "after": "minecraft:oak_leaves",
+          "count": 9
+        },
+        {
+          "before": "minecraft:carrots",
+          "after": "minecraft:hay_block",
+          "count": 8
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:wheat",
+          "count": 8
+        },
+        {
+          "before": "minecraft:large_fern",
+          "after": "minecraft:air",
+          "count": 8
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:poppy",
+          "count": 8
+        },
+        {
+          "before": "minecraft:wheat",
+          "after": "minecraft:hay_block",
+          "count": 7
+        },
+        {
+          "before": "minecraft:carrots",
+          "after": "minecraft:oak_leaves",
+          "count": 7
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:carrots",
+          "count": 6
+        },
+        {
+          "before": "minecraft:wheat",
+          "after": "minecraft:oak_leaves",
+          "count": 6
+        },
+        {
+          "before": "minecraft:hay_block",
+          "after": "minecraft:potatoes",
+          "count": 5
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:large_fern",
+          "count": 5
+        },
+        {
+          "before": "minecraft:potatoes",
+          "after": "minecraft:hay_block",
+          "count": 4
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:air",
+          "count": 4
+        },
+        {
+          "before": "minecraft:hay_block",
+          "after": "minecraft:carrots",
+          "count": 3
+        },
+        {
+          "before": "minecraft:hay_block",
+          "after": "minecraft:wheat",
+          "count": 3
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:short_grass",
+          "count": 2
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:short_grass",
+          "count": 2
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:large_fern",
+          "count": 2
+        },
+        {
+          "before": "minecraft:birch_log",
+          "after": "minecraft:large_fern",
+          "count": 2
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:oak_log",
+          "count": 2
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:fern",
+          "count": 1
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:azalea_leaves",
+          "count": 1
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:short_grass",
+          "count": 1
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:large_fern",
+          "count": 1
+        },
+        {
+          "before": "minecraft:birch_leaves",
+          "after": "minecraft:oak_log",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "scene": "natural_patterns",
+      "baseline_whole_sha256": "ccc7483cf4481104776f0af95359f726584064086da8464f25fce6b57551f641",
+      "candidate_whole_sha256": "a4ec8fcaeebc30ab0400ad49baf8233db3f75cd13ba48a8170623b7e7edc25dc",
+      "changed_blocks": 6945,
+      "other_chunk_fields": [],
+      "block_pairs": [
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:air",
+          "count": 1394
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:oak_leaves",
+          "count": 1134
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:air",
+          "count": 661
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:spruce_leaves",
+          "count": 597
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:short_grass",
+          "count": 426
+        },
+        {
+          "before": "minecraft:birch_leaves",
+          "after": "minecraft:air",
+          "count": 421
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:birch_leaves",
+          "count": 406
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:air",
+          "count": 398
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:spruce_leaves",
+          "count": 160
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:azalea_leaves",
+          "count": 131
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:air",
+          "count": 126
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:oak_log",
+          "count": 120
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:oak_leaves",
+          "count": 102
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:air",
+          "count": 98
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:birch_leaves",
+          "count": 86
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:air",
+          "count": 83
+        },
+        {
+          "before": "minecraft:birch_leaves",
+          "after": "minecraft:oak_leaves",
+          "count": 68
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:spruce_log",
+          "count": 63
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:birch_log",
+          "count": 47
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:birch_leaves",
+          "count": 45
+        },
+        {
+          "before": "minecraft:birch_log",
+          "after": "minecraft:air",
+          "count": 31
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:spruce_leaves",
+          "count": 24
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:spruce_log",
+          "count": 22
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:short_grass",
+          "count": 20
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:oak_leaves",
+          "count": 18
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:azalea_leaves",
+          "count": 17
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:air",
+          "count": 16
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:blue_orchid",
+          "count": 13
+        },
+        {
+          "before": "minecraft:blue_orchid",
+          "after": "minecraft:air",
+          "count": 13
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:poppy",
+          "count": 12
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:oak_log",
+          "count": 11
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:azure_bluet",
+          "count": 10
+        },
+        {
+          "before": "minecraft:birch_leaves",
+          "after": "minecraft:oak_log",
+          "count": 10
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:short_grass",
+          "count": 10
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:poppy",
+          "count": 9
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:dandelion",
+          "count": 8
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:short_grass",
+          "count": 8
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:birch_leaves",
+          "count": 8
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:oak_leaves",
+          "count": 8
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:azure_bluet",
+          "count": 7
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:birch_log",
+          "count": 7
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:air",
+          "count": 7
+        },
+        {
+          "before": "minecraft:birch_log",
+          "after": "minecraft:oak_leaves",
+          "count": 6
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:short_grass",
+          "count": 6
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:oak_leaves",
+          "count": 6
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:blue_orchid",
+          "count": 5
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:spruce_log",
+          "count": 4
+        },
+        {
+          "before": "minecraft:azure_bluet",
+          "after": "minecraft:air",
+          "count": 4
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:short_grass",
+          "count": 4
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:dandelion",
+          "count": 3
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:oak_log",
+          "count": 3
+        },
+        {
+          "before": "minecraft:blue_orchid",
+          "after": "minecraft:short_grass",
+          "count": 3
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:birch_log",
+          "count": 3
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:birch_leaves",
+          "count": 3
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:birch_log",
+          "count": 3
+        },
+        {
+          "before": "minecraft:birch_log",
+          "after": "minecraft:short_grass",
+          "count": 3
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:spruce_log",
+          "count": 3
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:azalea_leaves",
+          "count": 3
+        },
+        {
+          "before": "minecraft:birch_log",
+          "after": "minecraft:birch_leaves",
+          "count": 3
+        },
+        {
+          "before": "minecraft:birch_leaves",
+          "after": "minecraft:birch_log",
+          "count": 3
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:oak_log",
+          "count": 3
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:azalea_leaves",
+          "count": 2
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:short_grass",
+          "count": 2
+        },
+        {
+          "before": "minecraft:azure_bluet",
+          "after": "minecraft:short_grass",
+          "count": 2
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:oak_log",
+          "count": 2
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:azure_bluet",
+          "count": 1
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:blue_orchid",
+          "count": 1
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:oak_leaves",
+          "count": 1
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:azalea_leaves",
+          "count": 1
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:spruce_leaves",
+          "count": 1
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:blue_orchid",
+          "count": 1
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:dandelion",
+          "count": 1
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:azure_bluet",
+          "count": 1
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:spruce_log",
+          "count": 1
+        },
+        {
+          "before": "minecraft:azure_bluet",
+          "after": "minecraft:azalea_leaves",
+          "count": 1
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:azalea_leaves",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "scene": "leisure_patterns",
+      "baseline_whole_sha256": "ae86b4919a5b52e9f2afefefca5b776c3c5e6b8565e591c9c2a49cd530604256",
+      "candidate_whole_sha256": "f660d6223083497b5c0996d87b0f5d2a0a5b1c320a3089d8eaf6c0c01fd20444",
+      "changed_blocks": 3769,
+      "other_chunk_fields": [],
+      "block_pairs": [
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:oak_leaves",
+          "count": 737
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:air",
+          "count": 560
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:short_grass",
+          "count": 544
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:air",
+          "count": 277
+        },
+        {
+          "before": "minecraft:spruce_leaves",
+          "after": "minecraft:air",
+          "count": 255
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:jungle_leaves",
+          "count": 204
+        },
+        {
+          "before": "minecraft:cherry_leaves",
+          "after": "minecraft:air",
+          "count": 153
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:spruce_leaves",
+          "count": 101
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:acacia_leaves",
+          "count": 94
+        },
+        {
+          "before": "minecraft:jungle_leaves",
+          "after": "minecraft:air",
+          "count": 83
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:oak_log",
+          "count": 56
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:fern",
+          "count": 53
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:air",
+          "count": 51
+        },
+        {
+          "before": "minecraft:birch_leaves",
+          "after": "minecraft:air",
+          "count": 47
+        },
+        {
+          "before": "minecraft:blue_orchid",
+          "after": "minecraft:air",
+          "count": 41
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:blue_orchid",
+          "count": 39
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:dark_oak_leaves",
+          "count": 39
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:azure_bluet",
+          "count": 38
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:air",
+          "count": 37
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:dandelion",
+          "count": 37
+        },
+        {
+          "before": "minecraft:azure_bluet",
+          "after": "minecraft:air",
+          "count": 36
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:air",
+          "count": 34
+        },
+        {
+          "before": "minecraft:spruce_log",
+          "after": "minecraft:air",
+          "count": 31
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:poppy",
+          "count": 27
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:jungle_log",
+          "count": 25
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:air",
+          "count": 19
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:short_grass",
+          "count": 16
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:spruce_log",
+          "count": 15
+        },
+        {
+          "before": "minecraft:jungle_log",
+          "after": "minecraft:air",
+          "count": 12
+        },
+        {
+          "before": "minecraft:oak_log",
+          "after": "minecraft:air",
+          "count": 12
+        },
+        {
+          "before": "minecraft:jungle_leaves",
+          "after": "minecraft:acacia_leaves",
+          "count": 10
+        },
+        {
+          "before": "minecraft:cherry_log",
+          "after": "minecraft:air",
+          "count": 9
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:azure_bluet",
+          "count": 8
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:fern",
+          "count": 8
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:oak_leaves",
+          "count": 8
+        },
+        {
+          "before": "minecraft:fern",
+          "after": "minecraft:short_grass",
+          "count": 7
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:acacia_log",
+          "count": 6
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:poppy",
+          "count": 5
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:dandelion",
+          "count": 5
+        },
+        {
+          "before": "minecraft:birch_log",
+          "after": "minecraft:air",
+          "count": 4
+        },
+        {
+          "before": "minecraft:blue_orchid",
+          "after": "minecraft:oak_leaves",
+          "count": 3
+        },
+        {
+          "before": "minecraft:air",
+          "after": "minecraft:dark_oak_log",
+          "count": 3
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:short_grass",
+          "count": 3
+        },
+        {
+          "before": "minecraft:azalea_leaves",
+          "after": "minecraft:short_grass",
+          "count": 2
+        },
+        {
+          "before": "minecraft:jungle_log",
+          "after": "minecraft:acacia_leaves",
+          "count": 2
+        },
+        {
+          "before": "minecraft:azure_bluet",
+          "after": "minecraft:short_grass",
+          "count": 2
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:blue_orchid",
+          "count": 1
+        },
+        {
+          "before": "minecraft:dandelion",
+          "after": "minecraft:oak_leaves",
+          "count": 1
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:acacia_log",
+          "count": 1
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:azure_bluet",
+          "count": 1
+        },
+        {
+          "before": "minecraft:blue_orchid",
+          "after": "minecraft:short_grass",
+          "count": 1
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:poppy",
+          "count": 1
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:fern",
+          "count": 1
+        },
+        {
+          "before": "minecraft:poppy",
+          "after": "minecraft:short_grass",
+          "count": 1
+        },
+        {
+          "before": "minecraft:oak_leaves",
+          "after": "minecraft:azure_bluet",
+          "count": 1
+        },
+        {
+          "before": "minecraft:azure_bluet",
+          "after": "minecraft:blue_orchid",
+          "count": 1
+        },
+        {
+          "before": "minecraft:short_grass",
+          "after": "minecraft:blue_orchid",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "scene": "tunnel",
+      "baseline_whole_sha256": "9e299e1685184f4f16327e975f6eae57c30bf712ca4560a6f915fe320210b702",
+      "candidate_whole_sha256": "9e299e1685184f4f16327e975f6eae57c30bf712ca4560a6f915fe320210b702",
+      "changed_blocks": 0,
+      "other_chunk_fields": [],
+      "block_pairs": []
+    },
+    {
+      "scene": "rail_tunnel",
+      "baseline_whole_sha256": "aadef0e0370bbb8d975ec7ae580cc01e5072e448b20e2481452425458d964185",
+      "candidate_whole_sha256": "aadef0e0370bbb8d975ec7ae580cc01e5072e448b20e2481452425458d964185",
+      "changed_blocks": 0,
+      "other_chunk_fields": [],
+      "block_pairs": []
+    }
+  ],
+  "limits": [
+    "Small synthetic core64 regressions and translated actual generator tests do not qualify arbitrary geography or maximum sizes",
+    "Bounded slope regression addresses demonstrated tree-ground eligibility chain, not all possible obstruction dependencies",
+    "No block entity or exact-candidate Minecraft runtime qualification",
+    "New external-master vegetation appearance changes approved; stock path preserved",
+    "Capability admission and release/installation remain disabled"
+  ],
+  "checks": {
+    "headless_passed": 751,
+    "headless_ignored": 6,
+    "headless_failed": 0,
+    "new_focused_tests": 23,
+    "formatter": "passed",
+    "diff_check": "passed",
+    "clippy": "passed; 15 unchanged upstream warnings",
+    "clean_locked_headless_release": "passed",
+    "spec_review": "approved",
+    "quality_review": "approved; 23 focused tests independently rerun"
+  }
+}

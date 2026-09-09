@@ -7,6 +7,28 @@ use rand::Rng;
 
 type Coord = (i32, i32, i32);
 
+/// Procedural trees may not occupy a future ground cell in an external master.
+/// Otherwise an uphill root's grass check can depend on earlier trees beyond the halo.
+/// Read immutable terrain, never the mutable overlay or a road surface override.
+#[inline]
+fn set_procedural_block(
+    editor: &mut WorldEditor,
+    block: Block,
+    x: i32,
+    y: i32,
+    z: i32,
+    blacklist: Option<&[Block]>,
+) {
+    if editor.master_geometry().is_some()
+        && editor
+            .terrain_level(x, z)
+            .is_some_and(|terrain| y <= terrain)
+    {
+        return;
+    }
+    editor.set_block_absolute(block, x, y, z, None, blacklist);
+}
+
 // Concentric rings added on top of the trunk column to bulk up the canopy.
 #[rustfmt::skip]
 const ROUND1_PATTERN: [Coord; 8] = [
@@ -391,7 +413,7 @@ impl LeafPlacer<'_> {
         if self.blocked(x, y, z) {
             return;
         }
-        editor.set_block_absolute(self.leaves_block, x, y, z, None, None);
+        set_procedural_block(editor, self.leaves_block, x, y, z, None);
     }
 
     fn place_surface(&self, editor: &mut WorldEditor, x: i32, y: i32, z: i32) {
@@ -421,7 +443,7 @@ impl LeafPlacer<'_> {
         } else {
             self.leaves_block
         };
-        editor.set_block_absolute(block, x, y, z, None, None);
+        set_procedural_block(editor, block, x, y, z, None);
     }
 }
 
@@ -692,17 +714,23 @@ impl Tree {
             .min(trunk_cap);
 
         if tree.log_height > 0 {
-            editor.fill_blocks_absolute(
-                tree.log_block,
-                x,
-                base_y,
-                z,
-                x,
-                base_y + trunk_height,
-                z,
-                None,
-                Some(&blacklist),
-            );
+            if editor.master_geometry().is_some() {
+                for y in base_y..=base_y + trunk_height {
+                    set_procedural_block(editor, tree.log_block, x, y, z, Some(&blacklist));
+                }
+            } else {
+                editor.fill_blocks_absolute(
+                    tree.log_block,
+                    x,
+                    base_y,
+                    z,
+                    x,
+                    base_y + trunk_height,
+                    z,
+                    None,
+                    Some(&blacklist),
+                );
+            }
         }
 
         let roof_tops = if check_canopy_collision {
@@ -779,12 +807,12 @@ impl Tree {
             let branch_y_off = trunk_height - 2 - ((variant_idx >> 12) & 0x1) as i32;
             let branch_y = base_y + branch_y_off;
             for step in 1..=2 {
-                editor.set_block_absolute(
+                set_procedural_block(
+                    editor,
                     tree.log_block,
                     x + dx * step,
                     branch_y,
                     z + dz * step,
-                    None,
                     Some(&blacklist),
                 );
             }
@@ -838,24 +866,24 @@ impl Tree {
         let height = ((NOMINAL_TREE_HEIGHT_M * scale).round() as i32).clamp(1, 8);
         let trunk = (height - 1).max(0);
         for dy in 0..trunk {
-            editor.set_block_absolute(tree.log_block, x, base_y + dy, z, None, Some(blacklist));
+            set_procedural_block(editor, tree.log_block, x, base_y + dy, z, Some(blacklist));
         }
         let top = base_y + trunk;
-        editor.set_block_absolute(tree.leaves_block, x, top, z, None, Some(blacklist));
+        set_procedural_block(editor, tree.leaves_block, x, top, z, Some(blacklist));
         if height >= 3 {
             for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                editor.set_block_absolute(
+                set_procedural_block(
+                    editor,
                     tree.leaves_block,
                     x + dx,
                     top,
                     z + dz,
-                    None,
                     Some(blacklist),
                 );
             }
         }
         if height >= 5 {
-            editor.set_block_absolute(tree.leaves_block, x, top + 1, z, None, Some(blacklist));
+            set_procedural_block(editor, tree.leaves_block, x, top + 1, z, Some(blacklist));
         }
     }
 

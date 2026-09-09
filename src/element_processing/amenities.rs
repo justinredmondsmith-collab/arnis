@@ -302,8 +302,9 @@ pub fn generate_amenities(
                         let bresenham_points: Vec<(i32, i32, i32)> =
                             bresenham_line(prev.x, 0, prev.z, pt.x, 0, pt.z);
                         for (bx, _, bz) in bresenham_points {
+                            let (pattern_x, pattern_z) = editor.master_coordinates(bx, bz);
                             editor.set_block(
-                                semirandom_surface(bx, bz, block_types),
+                                semirandom_surface(pattern_x, pattern_z, block_types),
                                 bx,
                                 0,
                                 bz,
@@ -320,8 +321,9 @@ pub fn generate_amenities(
                     flood_fill_cache.get_or_compute_element(element, args.timeout.as_ref());
 
                 for &(x, z) in flood_area.iter() {
+                    let (pattern_x, pattern_z) = editor.master_coordinates(x, z);
                     editor.set_block(
-                        semirandom_surface(x, z, block_types),
+                        semirandom_surface(pattern_x, pattern_z, block_types),
                         x,
                         0,
                         z,
@@ -342,10 +344,10 @@ pub fn generate_amenities(
                         let lane_width = 5; // Width of driving lanes
 
                         // Calculate which "zone" this coordinate falls into
-                        let zone_x = x / space_width;
-                        let zone_z = z / (space_length + lane_width);
-                        let local_x = x % space_width;
-                        let local_z = z % (space_length + lane_width);
+                        let zone_x = pattern_x / space_width;
+                        let zone_z = pattern_z / (space_length + lane_width);
+                        let local_x = pattern_x % space_width;
+                        let local_z = pattern_z % (space_length + lane_width);
 
                         // Create parking space boundaries (only within parking areas, not in driving lanes)
                         if local_z < space_length {

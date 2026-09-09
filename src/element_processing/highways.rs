@@ -970,7 +970,11 @@ pub fn generate_highway_tunnel_shell(
                 };
                 for y in (ry - 1)..=col_top {
                     let block = if is_side_wall || (covered[i] && y == ceil_y) {
-                        tunnel_shell_block(bx + dx, y, bz + dz)
+                        {
+                            let (pattern_x, pattern_z) =
+                                editor.master_coordinates(bx + dx, bz + dz);
+                            tunnel_shell_block(pattern_x, y, pattern_z)
+                        }
                     } else {
                         STONE_BRICKS // foundation, road row, and interior placeholder
                     };

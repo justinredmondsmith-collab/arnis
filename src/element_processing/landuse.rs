@@ -1,7 +1,7 @@
 use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
-use crate::deterministic_rng::element_rng;
+use crate::deterministic_rng::{coord_rng, element_rng};
 use crate::element_processing::bridges::BridgeSurfaceMap;
 use crate::element_processing::tree::{Tree, TreeType};
 use crate::floodfill_cache::{BuildingFootprintBitmap, FloodFillCache, RoadMaskBitmap};
@@ -25,6 +25,7 @@ pub fn generate_landuse(
 
     // Use deterministic RNG seeded by element ID for consistent results across region boundaries
     let mut rng = element_rng(element.id);
+    let master_patterns = editor.master_geometry().is_some();
 
     let block_type = match landuse_tag.as_str() {
         "greenfield" | "meadow" | "grass" | "orchard" | "forest" => GRASS_BLOCK,
@@ -102,6 +103,12 @@ pub fn generate_landuse(
     let is_cemetery = landuse_tag == "cemetery";
 
     for &(x, z) in floor_area.iter() {
+        let (pattern_x, pattern_z) = editor.master_coordinates(x, z);
+        if master_patterns {
+            // Separate each column and purpose from conditional draws in earlier columns.
+            // The stock path keeps its original element stream.
+            rng = coord_rng(pattern_x, pattern_z, element.id ^ 0x6c61_6e64_7573_6501);
+        }
         // Apply per-block randomness for certain landuse types
         let actual_block = if landuse_tag == "industrial" {
             // Industrial: primarily stone, with some stone bricks and smooth stone
@@ -173,7 +180,7 @@ pub fn generate_landuse(
 
         // Add specific features for different landuse types
         match landuse_tag.as_str() {
-            "cemetery" if (x % 3 == 0) && (z % 3 == 0) => {
+            "cemetery" if (pattern_x % 3 == 0) && (pattern_z % 3 == 0) => {
                 // Flowers and ground cover only; tombstones are stamped below in this loop.
                 // 0..15 left empty to keep the original flower rates.
                 let random_choice: i32 = rng.random_range(0..100);
@@ -199,7 +206,7 @@ pub fn generate_landuse(
             }
             "forest" if editor.check_for_block(x, 0, z, Some(&[GRASS_BLOCK])) => {
                 // Density-modulated spawn: thickets in some patches, clearings in others.
-                let density = crate::ground_generation::value_noise_01(x, z, 32);
+                let density = crate::ground_generation::value_noise_01(pattern_x, pattern_z, 32);
                 let tree_threshold = ((60.0 - density * 45.0) as i32).max(5);
                 if rng.random_range(0..tree_threshold) == 0 {
                     let tree_type = *trees_ok_to_generate
@@ -236,7 +243,8 @@ pub fn generate_landuse(
             }
             "farmland" if !editor.check_for_block(x, 0, z, Some(&[WATER])) => {
                 // Irrigation dots, but only where boxed in so they can't flow downhill and wash out crops.
-                if x % 9 == 0 && z % 9 == 0 && editor.water_source_is_enclosed(x, z) {
+                if pattern_x % 9 == 0 && pattern_z % 9 == 0 && editor.water_source_is_enclosed(x, z)
+                {
                     editor.set_block(WATER, x, 0, z, Some(&[FARMLAND]), None);
                 } else if rng.random_range(0..76) == 0 {
                     let special_choice: i32 = rng.random_range(1..=10);
@@ -364,7 +372,7 @@ pub fn generate_landuse(
                 }
             }
             "orchard" => {
-                if x % 18 == 0 && z % 10 == 0 {
+                if pattern_x % 18 == 0 && pattern_z % 10 == 0 {
                     Tree::create(
                         editor,
                         (x, 1, z),

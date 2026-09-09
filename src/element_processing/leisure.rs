@@ -1,7 +1,7 @@
 use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
-use crate::deterministic_rng::element_rng;
+use crate::deterministic_rng::{coord_rng, element_rng};
 use crate::element_processing::bridges::BridgeSurfaceMap;
 use crate::element_processing::surfaces::get_blocks_for_surface;
 use crate::element_processing::tree::Tree;
@@ -108,8 +108,15 @@ pub fn generate_leisure(
         if corner_count > 0 {
             // Use deterministic RNG seeded by element ID for consistent results across region boundaries
             let mut rng = element_rng(element.id);
+            let master_patterns = editor.master_geometry().is_some();
 
             for &(x, z) in filled_area.iter() {
+                let (pattern_x, pattern_z) = editor.master_coordinates(x, z);
+                if master_patterns {
+                    // Separate each column and purpose from conditional draws in earlier columns.
+                    // The stock path keeps its original element stream.
+                    rng = coord_rng(pattern_x, pattern_z, element.id ^ 0x6c65_6973_7572_6501);
+                }
                 if master_water {
                     if let Some(surface) = editor.master_water_surface(x, z) {
                         editor.set_block_if_absent_absolute(WATER, x, surface, z);

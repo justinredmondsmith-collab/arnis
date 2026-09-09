@@ -1,7 +1,7 @@
 use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
-use crate::deterministic_rng::element_rng;
+use crate::deterministic_rng::{coord_rng, element_rng};
 use crate::element_processing::bridges::BridgeSurfaceMap;
 use crate::element_processing::tree::{Tree, TreeType};
 use crate::floodfill_cache::{is_oversized_ring, BuildingFootprintBitmap, FloodFillCache};
@@ -193,7 +193,8 @@ pub fn generate_natural(
                             ]),
                         ) {
                             let b = if rock_variation {
-                                vary_rock_block(block_type, bx, bz)
+                                let (px, pz) = editor.master_coordinates(bx, bz);
+                                vary_rock_block(block_type, px, pz)
                             } else {
                                 block_type
                             };
@@ -248,6 +249,7 @@ pub fn generate_natural(
 
                 // Use deterministic RNG seeded by element ID for consistent results across region boundaries
                 let mut rng = element_rng(way.id);
+                let master_patterns = editor.master_geometry().is_some();
 
                 // Blocks that natural areas should not overwrite
                 let protected_blocks: &[Block] = &[
@@ -265,6 +267,12 @@ pub fn generate_natural(
                 let mut wetland_puddles: Vec<(i32, i32)> = Vec::new();
 
                 for &(x, z) in filled_area.iter() {
+                    let (pattern_x, pattern_z) = editor.master_coordinates(x, z);
+                    if master_patterns {
+                        // Separate each column and purpose from conditional draws in earlier columns.
+                        // The stock path keeps its original element stream.
+                        rng = coord_rng(pattern_x, pattern_z, way.id ^ 0x6e61_7475_7261_6c01);
+                    }
                     if block_type == WATER && editor.tiler_owns_bathymetry() {
                         if let Some(surface) = editor.master_water_surface(x, z) {
                             editor.set_block_if_absent_absolute(WATER, x, surface, z);
@@ -274,7 +282,7 @@ pub fn generate_natural(
                     // Don't overwrite road/path blocks with natural ground
                     if !editor.check_for_block(x, 0, z, Some(protected_blocks)) {
                         let b = if rock_variation {
-                            vary_rock_block(block_type, x, z)
+                            vary_rock_block(block_type, pattern_x, pattern_z)
                         } else {
                             block_type
                         };
@@ -291,7 +299,7 @@ pub fn generate_natural(
                         }
                         "bare_rock" => {
                             // Varied rock surface: stone base with natural variation
-                            let h = crate::land_cover::coord_hash(x, z) % 12;
+                            let h = crate::land_cover::coord_hash(pattern_x, pattern_z) % 12;
                             let rock = match h {
                                 0..=4 => STONE,       // ~42% stone
                                 5..=6 => ANDESITE,    // ~17% andesite
@@ -371,7 +379,8 @@ pub fn generate_natural(
                             if !editor.check_for_block(x, 0, z, Some(&[GRASS_BLOCK])) {
                                 continue;
                             }
-                            let density = crate::ground_generation::value_noise_01(x, z, 32);
+                            let density =
+                                crate::ground_generation::value_noise_01(pattern_x, pattern_z, 32);
                             let tree_threshold = ((60.0 - density * 45.0) as i32).max(5);
                             let spawn_tree = rng.random_range(0..tree_threshold) == 0;
                             let random_choice: i32 = rng.random_range(0..30);
@@ -430,16 +439,19 @@ pub fn generate_natural(
                                 continue;
                             }
                             // Positional wet/dry mosaic; puddle cells take water and skip vegetation
-                            let wet = wetland_wet_zone(x, z);
-                            if wet && wetland_puddle_noise(x, z) {
+                            let wet = wetland_wet_zone(pattern_x, pattern_z);
+                            if wet && wetland_puddle_noise(pattern_x, pattern_z) {
                                 if try_place_wetland_puddle(editor, x, z) {
                                     wetland_puddles.push((x, z));
                                 }
                                 continue;
                             }
                             if wet {
-                                if crate::ground_generation::value_noise_01(x + 53, z + 71, 8)
-                                    > 0.55
+                                if crate::ground_generation::value_noise_01(
+                                    pattern_x + 53,
+                                    pattern_z + 71,
+                                    8,
+                                ) > 0.55
                                 {
                                     editor.set_block(COARSE_DIRT, x, 0, z, Some(&[MUD]), None);
                                 }
@@ -746,9 +758,10 @@ pub fn generate_natural(
                             if !area.contains(nx, nz) {
                                 continue;
                             }
+                            let (pattern_x, pattern_z) = editor.master_coordinates(nx, nz);
                             if crate::land_cover::coord_hash(
-                                nx.wrapping_add(89),
-                                nz.wrapping_add(97),
+                                pattern_x.wrapping_add(89),
+                                pattern_z.wrapping_add(97),
                             ) % 100
                                 >= 20
                             {
@@ -764,8 +777,8 @@ pub fn generate_natural(
                             }
                             let h = 1
                                 + (crate::land_cover::coord_hash(
-                                    nx.wrapping_add(131),
-                                    nz.wrapping_add(137),
+                                    pattern_x.wrapping_add(131),
+                                    pattern_z.wrapping_add(137),
                                 ) % 3) as i32;
                             // Stop at the first occupied level so cane never floats
                             for y in 1..=h {
