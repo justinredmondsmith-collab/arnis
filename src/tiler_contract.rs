@@ -481,6 +481,17 @@ pub(crate) fn profile_hash() -> String {
 }
 
 pub(crate) fn admit_sources(path: &std::path::Path) -> Result<AdmittedSources, ContractError> {
+    admit_sources_with_checks(path, |_| Ok(()), || Ok(()))
+}
+
+/// Optional stage-specific admission bounds and cancellation; stock callers use no-op checks.
+/// Validate declared sizes before opening any source, then checkpoint every hash chunk.
+pub(crate) fn admit_sources_with_checks(
+    path: &std::path::Path,
+    validate: impl Fn(&[SourceEntry]) -> Result<(), ContractError>,
+    checkpoint: impl Fn() -> Result<(), ContractError>,
+) -> Result<AdmittedSources, ContractError> {
+    checkpoint()?;
     use sha2::{Digest, Sha256};
     use std::io::Read;
     let io_error = |e: std::io::Error| ContractError {
@@ -498,6 +509,7 @@ pub(crate) fn admit_sources(path: &std::path::Path) -> Result<AdmittedSources, C
     if bytes.len() > 1_048_576 {
         return Err(incompatible("Source manifest exceeds 1 MiB"));
     }
+    checkpoint()?;
     let mut manifest: SourceManifest = serde_json::from_slice(&bytes)
         .map_err(|e| malformed(format!("Invalid source manifest: {e}")))?;
     if manifest.schema_version != 1 || manifest.profile_sha256 != profile_hash() {
@@ -506,8 +518,10 @@ pub(crate) fn admit_sources(path: &std::path::Path) -> Result<AdmittedSources, C
     if manifest.entries.is_empty() {
         return Err(malformed("Source manifest cannot be empty"));
     }
+    validate(&manifest.entries)?;
     let mut keys = std::collections::BTreeSet::new();
     for entry in &mut manifest.entries {
+        checkpoint()?;
         if ![
             "osm",
             "elevation",
@@ -515,9 +529,11 @@ pub(crate) fn admit_sources(path: &std::path::Path) -> Result<AdmittedSources, C
             "climate",
             "legacy_tree_asset",
             "water_classification",
+            "coastal_geometry",
         ]
         .contains(&entry.kind.as_str())
             || (entry.kind == "water_classification" && entry.key != "master-water-classification")
+            || (entry.kind == "coastal_geometry" && entry.key != "master-ocean-geometry")
             || entry.key.is_empty()
             || !keys.insert((entry.kind.clone(), entry.key.clone()))
         {
@@ -558,6 +574,7 @@ pub(crate) fn admit_sources(path: &std::path::Path) -> Result<AdmittedSources, C
         let mut buffer = [0u8; 65536];
         let mut total = 0u64;
         loop {
+            checkpoint()?;
             let n = file.read(&mut buffer).map_err(io_error)?;
             if n == 0 {
                 break;
@@ -581,6 +598,7 @@ pub(crate) fn admit_sources(path: &std::path::Path) -> Result<AdmittedSources, C
         }
         entry.path = resolved;
     }
+    checkpoint()?;
     Ok(AdmittedSources {
         sha256: format!("{:x}", Sha256::digest(&bytes)),
         entries: manifest.entries,
@@ -613,6 +631,22 @@ pub(crate) mod frozen_tests {
         .unwrap();
         let sources = admit_sources(&manifest).unwrap();
         (dir, sources)
+    }
+    #[test]
+    fn coastal_geometry_source_has_exact_authenticated_key() {
+        let (dir, sources) = fixture("coastal_geometry", "master-ocean-geometry", b"{}");
+        assert_eq!(
+            sources
+                .resolve("coastal_geometry", "master-ocean-geometry", 64)
+                .unwrap(),
+            b"{}"
+        );
+        let path = dir.path().join("manifest.json");
+        let bytes = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("master-ocean-geometry", "unknown-ocean");
+        std::fs::write(&path, bytes).unwrap();
+        assert!(admit_sources(&path).is_err());
     }
     #[test]
     fn coastal_classification_source_is_an_admitted_frozen_kind() {

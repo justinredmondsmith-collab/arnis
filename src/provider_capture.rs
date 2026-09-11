@@ -675,7 +675,7 @@ fn capture(
     Ok(())
 }
 #[cfg(target_os = "linux")]
-fn publish_noreplace(source: &Path, destination: &Path) -> Result<(), String> {
+pub(crate) fn publish_noreplace(source: &Path, destination: &Path) -> Result<(), String> {
     use std::os::unix::ffi::OsStrExt;
     unsafe extern "C" {
         fn renameat2(
@@ -700,7 +700,7 @@ fn publish_noreplace(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 #[cfg(not(target_os = "linux"))]
-fn publish_noreplace(_source: &Path, _destination: &Path) -> Result<(), String> {
+pub(crate) fn publish_noreplace(_source: &Path, _destination: &Path) -> Result<(), String> {
     Err("capture_platform: atomic publication requires Linux".into())
 }
 
