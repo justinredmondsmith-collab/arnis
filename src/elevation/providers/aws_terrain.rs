@@ -217,6 +217,16 @@ fn frozen_tile_coordinates(
     width: usize,
     height: usize,
 ) -> Result<Vec<(u32, u32)>, String> {
+    frozen_tile_coordinates_bounded(bbox, zoom, width, height, usize::MAX)
+}
+
+fn frozen_tile_coordinates_bounded(
+    bbox: &LLBBox,
+    zoom: u8,
+    width: usize,
+    height: usize,
+    max_tiles: usize,
+) -> Result<Vec<(u32, u32)>, String> {
     use std::collections::BTreeSet;
     let n = 2.0_f64.powi(zoom as i32);
     let mut xs = BTreeSet::new();
@@ -243,14 +253,42 @@ fn frozen_tile_coordinates(
             &mut ys,
         )?;
     }
+    let count = xs
+        .len()
+        .checked_mul(ys.len())
+        .ok_or("capture_capacity: AWS tile count overflow")?;
+    if count > max_tiles {
+        return Err(format!(
+            "capture_capacity: AWS requires {count} responses; limit {max_tiles}"
+        ));
+    }
     Ok(xs
         .into_iter()
         .flat_map(|x| ys.iter().map(move |&y| (x, y)))
         .collect())
 }
 
+pub(crate) fn capture_tiles(
+    bbox: &LLBBox,
+    width: usize,
+    height: usize,
+    sources: &dyn crate::tiler_contract::SourceResponseReader,
+    max_tiles: usize,
+) -> Result<(), String> {
+    sources.checkpoint()?;
+    let zoom = calculate_zoom_level(bbox);
+    let tiles = frozen_tile_coordinates_bounded(bbox, zoom, width, height, max_tiles)?;
+    sources.checkpoint()?;
+    for (x, y) in tiles {
+        sources.checkpoint()?;
+        load_frozen_tile(sources, x, y, zoom)?;
+        sources.checkpoint()?;
+    }
+    Ok(())
+}
+
 fn load_frozen_tile(
-    sources: &crate::tiler_contract::AdmittedSources,
+    sources: &dyn crate::tiler_contract::SourceResponseReader,
     x: u32,
     y: u32,
     zoom: u8,
@@ -635,5 +673,56 @@ mod frozen_tests {
         assert!(load_frozen_tile(&invalid, 1, 2, 15).is_err());
         let bbox = LLBBox::new(40.7, -74.0, 40.70001, -73.99999).unwrap();
         assert!(AwsTerrain.fetch_raw_frozen(&bbox, 2, 2, &sources).is_err());
+    }
+}
+
+#[cfg(test)]
+mod capture_planner_tests {
+    use super::*;
+    #[test]
+    fn capture_planner_includes_frozen_neighbors_and_checks_capacity() {
+        let boundary = 9650.0 * 360.0 / 32768.0 - 180.0;
+        let bbox =
+            LLBBox::new(40.7, boundary - 0.000001, 40.700001, boundary - 0.00000001).unwrap();
+        let zoom = calculate_zoom_level(&bbox);
+        let exact = frozen_tile_coordinates(&bbox, zoom, 2, 2).unwrap();
+        assert!(exact.len() > get_tile_coordinates(&bbox, zoom).len());
+        assert_eq!(
+            frozen_tile_coordinates_bounded(&bbox, zoom, 2, 2, exact.len()).unwrap(),
+            exact
+        );
+        assert!(
+            frozen_tile_coordinates_bounded(&bbox, zoom, 2, 2, exact.len() - 1)
+                .unwrap_err()
+                .starts_with("capture_capacity")
+        );
+        let bbox = LLBBox::new(0.1, 0.1, 10.0, 10.0).unwrap();
+        assert!(
+            frozen_tile_coordinates_bounded(&bbox, 15, 16384, 16384, 1024)
+                .unwrap_err()
+                .starts_with("capture_capacity")
+        );
+    }
+}
+
+#[cfg(test)]
+mod capture_capacity_profile_tests {
+    use super::*;
+    #[test]
+    fn legal_profile_bbox_can_exceed_capture_capacity_without_shrinking() {
+        let bbox = LLBBox::new(83.962, 0.009, 83.9988, 0.359).unwrap();
+        let (w, h, gw, gh) = crate::elevation::compute_grid_dims(&bbox, 1.0);
+        assert!(w <= 16384 && h <= 16384 && w * h <= 16777216);
+        assert_eq!((w, h), (gw, gh));
+        let zoom = calculate_zoom_level(&bbox);
+        let full = frozen_tile_coordinates(&bbox, zoom, gw, gh).unwrap();
+        assert!(full.len() > 1024, "{}", full.len());
+        assert!(frozen_tile_coordinates_bounded(&bbox, zoom, gw, gh, 1024)
+            .unwrap_err()
+            .starts_with("capture_capacity"));
+        eprintln!(
+            "legal profile capacity witness: {w}x{h}, AWS {} requests at zoom {zoom}",
+            full.len()
+        );
     }
 }

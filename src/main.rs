@@ -41,6 +41,7 @@ mod preview_3d;
 #[cfg(feature = "gui")]
 mod progress;
 mod projection;
+mod provider_capture;
 mod retrieve_data;
 mod structures;
 #[cfg(feature = "gui")]
@@ -604,6 +605,13 @@ fn main() {
     // Contract queries and invalid integration controls must precede all stock
     // CLI side effects, including update checks, cache cleanup and output creation.
     let raw_args: Vec<_> = std::env::args_os().skip(1).collect();
+    if let Some(result) = provider_capture::run_command(&raw_args) {
+        if let Err(error) = result {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     match tiler_contract::capability_command(&raw_args) {
         Ok(true) => {
             println!("{}", tiler_contract::capability_report());

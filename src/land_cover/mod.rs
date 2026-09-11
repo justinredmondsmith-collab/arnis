@@ -184,6 +184,20 @@ pub(crate) fn fetch_land_cover_data_with_sources(
     grid_height: usize,
     sources: Option<&crate::tiler_contract::AdmittedSources>,
 ) -> Result<LandCoverData, Box<dyn std::error::Error>> {
+    fetch_land_cover_data_with_reader(
+        bbox,
+        grid_width,
+        grid_height,
+        sources.map(|s| s as &dyn crate::tiler_contract::SourceResponseReader),
+    )
+}
+
+pub(crate) fn fetch_land_cover_data_with_reader(
+    bbox: &LLBBox,
+    grid_width: usize,
+    grid_height: usize,
+    sources: Option<&dyn crate::tiler_contract::SourceResponseReader>,
+) -> Result<LandCoverData, Box<dyn std::error::Error>> {
     if sources.is_some() && (bbox.min().lat() < -60.0 || bbox.max().lat() >= 84.0) {
         return Err("Frozen master requires complete ESA latitude coverage [-60, 84)".into());
     }
@@ -383,6 +397,18 @@ const MAX_RASTER_PIXELS: usize = 1 << 31;
 impl EsaPixelRaster {
     /// Raster covering `bbox` at `ppd`, filled with nodata.
     fn covering(bbox: &LLBBox, ppd: f64) -> Option<Self> {
+        let mut raster = Self::window(bbox, ppd)?;
+        let pixels = raster.width.checked_mul(raster.height)?;
+        if raster.data.try_reserve_exact(pixels).is_err() {
+            eprintln!("Warning: could not allocate the {pixels}-pixel ESA WorldCover raster; skipping land cover");
+            return None;
+        }
+        raster.data.resize(pixels, 0);
+        Some(raster)
+    }
+
+    // Shared capture/render window arithmetic; capture never allocates the full raster.
+    fn window(bbox: &LLBBox, ppd: f64) -> Option<Self> {
         let x0 = ((bbox.min().lng() + 180.0) * ppd).floor();
         let x1 = ((bbox.max().lng() + 180.0) * ppd).floor();
         let y0 = ((90.0 - bbox.max().lat()) * ppd).floor();
@@ -405,16 +431,7 @@ impl EsaPixelRaster {
             );
             return None;
         }
-        // A country-scale bbox asks for a gigabyte here, so failing to get it has to drop
-        // land cover rather than abort the process the way an infallible alloc would.
-        let mut data: Vec<u8> = Vec::new();
-        if data.try_reserve_exact(pixels).is_err() {
-            eprintln!(
-                "Warning: could not allocate the {pixels}-pixel ESA WorldCover raster; skipping land cover"
-            );
-            return None;
-        }
-        data.resize(pixels, 0);
+        let data = Vec::new();
         Some(Self {
             x0: x0 as i64,
             y0: y0 as i64,
@@ -519,7 +536,7 @@ impl GridMapping {
 /// the tile's pixel size on first use. Only the COG tiles that overlap are fetched.
 enum EsaSource<'a> {
     Live(reqwest::blocking::Client),
-    Frozen(&'a crate::tiler_contract::AdmittedSources),
+    Frozen(&'a dyn crate::tiler_contract::SourceResponseReader),
 }
 impl EsaSource<'_> {
     fn frozen(&self) -> bool {
@@ -536,6 +553,25 @@ fn read_esa_tile_into_raster(
     bbox: &LLBBox,
     raster: &mut Option<EsaPixelRaster>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    read_esa_tile(
+        client, url, cache_dir, tile_lat, tile_lng, bbox, raster, false,
+    )
+    .map(|_| ())
+}
+
+// Capture uses this exact production metadata/range/chunk walk without storing pixels.
+#[allow(clippy::too_many_arguments)]
+fn read_esa_tile(
+    client: &EsaSource<'_>,
+    url: &str,
+    cache_dir: &Path,
+    tile_lat: f64,
+    tile_lng: f64,
+    bbox: &LLBBox,
+    raster: &mut Option<EsaPixelRaster>,
+    capture_only: bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let mut has_data = false;
     // The ESA tile covers [tile_lat, tile_lat+3] x [tile_lng, tile_lng+3]
     let tile_north = tile_lat + ESA_TILE_DEGREES;
 
@@ -615,8 +651,12 @@ fn read_esa_tile_into_raster(
             r
         }
         slot @ None => {
-            let r = EsaPixelRaster::covering(bbox, ppd)
-                .ok_or("Cannot build a pixel raster for this bounding box")?;
+            let r = if capture_only {
+                EsaPixelRaster::window(bbox, ppd)
+            } else {
+                EsaPixelRaster::covering(bbox, ppd)
+            }
+            .ok_or("Cannot build a pixel raster for this bounding box")?;
             slot.insert(r)
         }
     };
@@ -629,7 +669,7 @@ fn read_esa_tile_into_raster(
     let ly_lo = (raster.y0 - tile_px_y0).max(0);
     let ly_hi = (raster.y0 + raster.height as i64 - tile_px_y0).min(cog.image_height as i64);
     if lx_lo >= lx_hi || ly_lo >= ly_hi {
-        return Ok(());
+        return Ok(false);
     }
     let (lx_lo, lx_hi, ly_lo, ly_hi) = (lx_lo as u64, lx_hi as u64, ly_lo as u64, ly_hi as u64);
 
@@ -643,6 +683,9 @@ fn read_esa_tile_into_raster(
     // Step 6: Fetch and decode each needed internal tile
     for ity in itile_min_y..=itile_max_y {
         for itx in itile_min_x..=itile_max_x {
+            if let EsaSource::Frozen(sources) = client {
+                sources.checkpoint()?;
+            }
             let tile_index = (ity * tiles_across + itx) as usize;
             if tile_index >= cog.tile_offsets.len() || tile_index >= cog.tile_byte_counts.len() {
                 if client.frozen() {
@@ -715,12 +758,47 @@ fn read_esa_tile_into_raster(
                 let ry = (tile_px_y0 + abs_py as i64 - raster.y0) as usize;
                 let rx = (tile_px_x0 + x_from as i64 - raster.x0) as usize;
                 let dst_start = ry * raster.width + rx;
-                raster.data[dst_start..dst_start + (x_to - x_from) as usize]
-                    .copy_from_slice(&pixels[src_start..src_end]);
+                let row = &pixels[src_start..src_end];
+                has_data |= row.iter().any(|&value| value != 0);
+                if !capture_only {
+                    raster.data[dst_start..dst_start + (x_to - x_from) as usize]
+                        .copy_from_slice(row);
+                }
             }
         }
     }
 
+    Ok(has_data)
+}
+
+pub(crate) fn capture_ranges(
+    bbox: &LLBBox,
+    sources: &dyn crate::tiler_contract::SourceResponseReader,
+) -> Result<(), Box<dyn std::error::Error>> {
+    sources.checkpoint()?;
+    if bbox.min().lat() < -60.0 || bbox.max().lat() >= 84.0 {
+        return Err("Frozen master requires complete ESA latitude coverage [-60, 84)".into());
+    }
+    let client = EsaSource::Frozen(sources);
+    let mut raster = None;
+    let mut has_data = false;
+    for (lat, lng, url) in get_esa_tile_specs(bbox) {
+        sources.checkpoint()?;
+        has_data |= read_esa_tile(
+            &client,
+            &url,
+            Path::new(""),
+            lat,
+            lng,
+            bbox,
+            &mut raster,
+            true,
+        )?;
+    }
+    sources.checkpoint()?;
+    if !has_data {
+        return Err("Land cover unavailable: requested overlap has no data".into());
+    }
     Ok(())
 }
 
@@ -736,6 +814,7 @@ fn fetch_range(
         .ok_or("ESA range overflow")?;
     let client = match client {
         EsaSource::Frozen(sources) => {
+            sources.checkpoint()?;
             if length > 64 * 1024 * 1024 {
                 return Err("ESA range exceeds 64 MiB bound".into());
             }
