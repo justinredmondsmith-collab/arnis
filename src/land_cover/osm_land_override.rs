@@ -45,6 +45,103 @@ pub fn apply_osm_land_override(
         return;
     }
 
+    let band = band_cells(land_cover.cells_per_meter);
+    let RawOsmEvidence {
+        water_area,
+        water_line,
+        mut land,
+        over_water,
+        any_area,
+        any_land,
+    } = raw_osm_evidence(
+        [width, height],
+        [world_width, world_height],
+        elements,
+        xzbbox,
+        scale,
+    );
+    if !any_area && !any_land {
+        return;
+    }
+
+    // A road stamped across a pier is not evidence of land under it.
+    for (l, o) in land.iter_mut().zip(over_water.iter()) {
+        *l &= !o;
+    }
+    drop(over_water);
+
+    // Water within `band` steps of ESA land: the rim the classification may have got wrong.
+    let rim = dilate(n, width, height, band, |idx| !is_water(idx), is_water);
+    // Water reachable from a mapped water area without leaving the water: the same body,
+    // past the outline OSM drew for it. Walking over land instead would let a mapped lake
+    // condemn a separate body across an isthmus.
+    let past_outline = if any_area {
+        dilate(
+            n,
+            width,
+            height,
+            band,
+            |idx| get_bit(&water_area, idx),
+            is_water,
+        )
+    } else {
+        vec![0u64; n.div_ceil(64)]
+    };
+
+    let radius = band + 2;
+    let mut changes: Vec<(u32, u32, u8)> = Vec::new();
+    for idx in 0..n {
+        if !get_bit(&rim, idx) || get_bit(&water_area, idx) || get_bit(&water_line, idx) {
+            continue;
+        }
+        if !(get_bit(&past_outline, idx) || get_bit(&land, idx)) {
+            continue;
+        }
+        let (x, z) = (idx % width, idx / width);
+        if let Some(c) = nearest_land_class(grid, width, height, x, z, radius) {
+            changes.push((x as u32, z as u32, c));
+        }
+    }
+    if changes.is_empty() {
+        return;
+    }
+    for &(x, z, c) in &changes {
+        land_cover.grid[z as usize][x as usize] = c;
+    }
+    eprintln!(
+        "OSM land override: {} shore cells reclassified from ESA water to land",
+        changes.len()
+    );
+    land_cover.water_distance = compute_water_distance(&land_cover.grid, width, height);
+    land_cover.invalidate_water_blend_grid();
+}
+
+/// Raw mapped footprints shared by stock repair and offline coastal classification.
+/// This helper deliberately has no ESA classification or shore-band early return.
+pub(crate) struct RawOsmEvidence {
+    water_area: Vec<u64>,
+    water_line: Vec<u64>,
+    land: Vec<u64>,
+    over_water: Vec<u64>,
+    any_area: bool,
+    any_land: bool,
+}
+impl RawOsmEvidence {
+    pub(crate) fn land(&self, i: usize) -> bool {
+        get_bit(&self.land, i)
+    }
+    pub(crate) fn veto(&self, i: usize) -> bool {
+        get_bit(&self.over_water, i) || get_bit(&self.water_area, i) || get_bit(&self.water_line, i)
+    }
+}
+pub(crate) fn raw_osm_evidence(
+    [width, height]: [usize; 2],
+    [world_width, world_height]: [usize; 2],
+    elements: &[ProcessedElement],
+    xzbbox: &XZBBox,
+    scale: f64,
+) -> RawOsmEvidence {
+    let n = width * height;
     let map = GridMap {
         min_x: xzbbox.min_x(),
         min_z: xzbbox.min_z(),
@@ -53,7 +150,6 @@ pub fn apply_osm_land_override(
         width,
         height,
     };
-    let band = band_cells(land_cover.cells_per_meter);
 
     // OSM water areas: authoritative for where the shore is, and never trimmed.
     let mut water_area = vec![0u64; n.div_ceil(64)];
@@ -121,60 +217,14 @@ pub fn apply_osm_land_override(
             _ => {}
         }
     }
-    if !any_area && !any_land {
-        return;
+    RawOsmEvidence {
+        water_area,
+        water_line,
+        land,
+        over_water,
+        any_area,
+        any_land,
     }
-
-    // A road stamped across a pier is not evidence of land under it.
-    for (l, o) in land.iter_mut().zip(over_water.iter()) {
-        *l &= !o;
-    }
-    drop(over_water);
-
-    // Water within `band` steps of ESA land: the rim the classification may have got wrong.
-    let rim = dilate(n, width, height, band, |idx| !is_water(idx), is_water);
-    // Water reachable from a mapped water area without leaving the water: the same body,
-    // past the outline OSM drew for it. Walking over land instead would let a mapped lake
-    // condemn a separate body across an isthmus.
-    let past_outline = if any_area {
-        dilate(
-            n,
-            width,
-            height,
-            band,
-            |idx| get_bit(&water_area, idx),
-            is_water,
-        )
-    } else {
-        vec![0u64; n.div_ceil(64)]
-    };
-
-    let radius = band + 2;
-    let mut changes: Vec<(u32, u32, u8)> = Vec::new();
-    for idx in 0..n {
-        if !get_bit(&rim, idx) || get_bit(&water_area, idx) || get_bit(&water_line, idx) {
-            continue;
-        }
-        if !(get_bit(&past_outline, idx) || get_bit(&land, idx)) {
-            continue;
-        }
-        let (x, z) = (idx % width, idx / width);
-        if let Some(c) = nearest_land_class(grid, width, height, x, z, radius) {
-            changes.push((x as u32, z as u32, c));
-        }
-    }
-    if changes.is_empty() {
-        return;
-    }
-    for &(x, z, c) in &changes {
-        land_cover.grid[z as usize][x as usize] = c;
-    }
-    eprintln!(
-        "OSM land override: {} shore cells reclassified from ESA water to land",
-        changes.len()
-    );
-    land_cover.water_distance = compute_water_distance(&land_cover.grid, width, height);
-    land_cover.invalidate_water_blend_grid();
 }
 
 /// The band in grid cells. Sized in real metres so it holds at any scale and latitude.

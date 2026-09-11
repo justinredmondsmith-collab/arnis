@@ -11,6 +11,9 @@ mod canopy;
 mod climate;
 mod clipping;
 mod coastal;
+mod coastal_classification;
+mod coastal_classification_geometry;
+mod coastal_geometry;
 mod colors;
 mod coordinate_system;
 mod data_processing;
@@ -605,7 +608,9 @@ fn main() {
     // Contract queries and invalid integration controls must precede all stock
     // CLI side effects, including update checks, cache cleanup and output creation.
     let raw_args: Vec<_> = std::env::args_os().skip(1).collect();
-    if let Some(result) = provider_capture::run_command(&raw_args) {
+    if let Some(result) = coastal_classification::run_command(&raw_args)
+        .or_else(|| provider_capture::run_command(&raw_args))
+    {
         if let Err(error) = result {
             eprintln!("{error}");
             std::process::exit(1);

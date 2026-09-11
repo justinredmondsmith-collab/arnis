@@ -239,12 +239,12 @@ struct DomainDocument {
     water: Geometry,
     inland_exclusions: Geometry,
 }
-#[derive(Deserialize)]
+#[derive(serde::Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Geometry {
+pub(crate) struct Geometry {
     #[serde(rename = "type")]
-    kind: String,
-    coordinates: Vec<Vec<Vec<[f64; 2]>>>,
+    pub(crate) kind: String,
+    pub(crate) coordinates: Vec<Vec<Vec<[f64; 2]>>>,
 }
 struct Domain {
     domain: MultiPolygon,
@@ -253,6 +253,7 @@ struct Domain {
 }
 pub(crate) struct CoastalPolicy {
     domains: Vec<Domain>,
+    frame: Option<crate::coastal_geometry::Frame>,
 }
 impl Geometry {
     fn validate(
@@ -260,6 +261,15 @@ impl Geometry {
         bbox: &[f64; 4],
         count: &mut usize,
         empty: bool,
+    ) -> Result<MultiPolygon, String> {
+        self.validate_limit(bbox, count, empty, 100_000)
+    }
+    pub(crate) fn validate_limit(
+        self,
+        bbox: &[f64; 4],
+        count: &mut usize,
+        empty: bool,
+        limit: usize,
     ) -> Result<MultiPolygon, String> {
         if self.kind != "MultiPolygon" || (!empty && self.coordinates.is_empty()) {
             return Err("Coastal geometry requires a nonempty MultiPolygon".into());
@@ -271,9 +281,11 @@ impl Geometry {
             }
             let mut lines = Vec::new();
             for ring in rings {
-                *count += ring.len();
-                if *count > 100_000 {
-                    return Err("Coastal geometry exceeds 100000 vertices".into());
+                *count = count
+                    .checked_add(ring.len())
+                    .ok_or("Coastal vertex count overflow")?;
+                if *count > limit {
+                    return Err(format!("Coastal geometry exceeds {limit} vertices"));
                 }
                 if ring.len() < 4
                     || ring.first() != ring.last()
@@ -336,7 +348,33 @@ impl CoastalPolicy {
             .iter()
             .map(|e| (e.kind.as_str(), e.key.as_str()))
             .collect();
-        Self::parse(&bytes, bbox, &refs).map_err(error)
+        let mut policy = Self::parse(&bytes, bbox, &refs).map_err(error)?;
+        let doc: Document = serde_json::from_slice(&bytes).map_err(|e| error(e.to_string()))?;
+        if sources.entries.iter().any(|s| s.kind == "coastal_geometry") {
+            if !doc
+                .sources
+                .iter()
+                .any(|s| s.kind == "osm" && s.key == "master-osm")
+                || !doc
+                    .sources
+                    .iter()
+                    .any(|s| s.kind == "coastal_geometry" && s.key == crate::coastal_geometry::KEY)
+            {
+                return Err(error(
+                    "Coastal source-backed policy requires master OSM and ocean geometry".into(),
+                ));
+            }
+            let geometry = sources
+                .resolve(
+                    "coastal_geometry",
+                    crate::coastal_geometry::KEY,
+                    crate::coastal_geometry::MAX_BYTES,
+                )
+                .map_err(error)?;
+            let (frame, _) = crate::coastal_geometry::parse(&geometry, *bbox).map_err(error)?;
+            policy.frame = Some(frame);
+        }
+        Ok(policy)
     }
     pub(crate) fn parse(
         bytes: &[u8],
@@ -397,7 +435,34 @@ impl CoastalPolicy {
                 inland,
             });
         }
-        Ok(Self { domains })
+        Ok(Self {
+            domains,
+            frame: None,
+        })
+    }
+    /// Verify only the bound master lattice; do not expose continuous classification.
+    pub(crate) fn verify_samples(
+        &self,
+        bbox: &[f64; 4],
+        dims: [usize; 2],
+        expected: &[u8],
+        checkpoint: impl Fn() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let [w, h] = dims;
+        if w < 2 || h < 2 || w.checked_mul(h) != Some(expected.len()) {
+            return Err("Coastal verification dimensions mismatch".into());
+        }
+        for row in 0..h {
+            checkpoint()?;
+            for col in 0..w {
+                let lon = bbox[1] + col as f64 * (bbox[3] - bbox[1]) / (w - 1) as f64;
+                let lat = bbox[2] - row as f64 * (bbox[2] - bbox[0]) / (h - 1) as f64;
+                if self.classify(lon, lat) != expected[row * w + col] {
+                    return Err(format!("Coastal serialized sample mismatch at {col},{row}"));
+                }
+            }
+        }
+        Ok(())
     }
     // 0: ordinary inland pipeline, 1: protected coastal dry, 2: coastal wet.
     fn classify(&self, lon: f64, lat: f64) -> u8 {
@@ -446,6 +511,12 @@ impl CoastalPolicy {
             || lc.iter().any(|r| r.len() != width)
         {
             return Err("Coastal master bands must be aligned".into());
+        }
+        if self
+            .frame
+            .is_some_and(|f| f.bbox != *bbox || f.dims != [width, height])
+        {
+            return Err("Coastal source-bound sample frame mismatch".into());
         }
         let mut classes = Vec::with_capacity(width * height);
         let mut repaired_m = Vec::with_capacity(width * height);

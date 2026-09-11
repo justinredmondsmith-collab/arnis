@@ -9,6 +9,23 @@ use crate::osm_parser::{ProcessedElement, ProcessedMemberRole, ProcessedRelation
 use crate::world_editor::WorldEditor;
 use rand::{prelude::IndexedRandom, Rng};
 
+/// Geometry shared with positive mapped-cliff evidence; material decisions stay in generation.
+pub(crate) fn natural_way_fill(
+    way: &ProcessedWay,
+    cache: &FloodFillCache,
+    timeout: Option<&std::time::Duration>,
+) -> Option<crate::floodfill_cache::FloodFillResult> {
+    let filled = cache.get_or_compute(way, timeout);
+    if filled.is_empty() && is_oversized_ring(way) {
+        None
+    } else {
+        Some(filled)
+    }
+}
+pub(crate) fn natural_edge_cells(a: (i32, i32), b: (i32, i32)) -> Vec<(i32, i32, i32)> {
+    bresenham_line(a.0, 0, a.1, b.0, 0, b.1)
+}
+
 pub fn generate_natural(
     editor: &mut WorldEditor,
     element: &ProcessedElement,
@@ -155,10 +172,10 @@ pub fn generate_natural(
             // Resolve the fill before painting the edge. It is cached, so this costs nothing
             // extra. A closed ring that comes back empty is one the fill refused for size, and
             // drawing its edge anyway leaves a border around ground nothing ever filled.
-            let filled_area = flood_fill_cache.get_or_compute(way, args.timeout.as_ref());
-            if filled_area.is_empty() && is_oversized_ring(way) {
+            let Some(filled_area) = natural_way_fill(way, flood_fill_cache, args.timeout.as_ref())
+            else {
                 return;
-            }
+            };
 
             // Process natural nodes to fill the area
             for node in &way.nodes {
@@ -167,8 +184,7 @@ pub fn generate_natural(
 
                 if let Some(prev) = previous_node {
                     // Generate the line of coordinates between the two nodes
-                    let bresenham_points: Vec<(i32, i32, i32)> =
-                        bresenham_line(prev.0, 0, prev.1, x, 0, z);
+                    let bresenham_points: Vec<(i32, i32, i32)> = natural_edge_cells(prev, (x, z));
                     for (bx, _, bz) in bresenham_points {
                         if block_type == WATER && editor.tiler_owns_bathymetry() {
                             if let Some(surface) = editor.master_water_surface(bx, bz) {
