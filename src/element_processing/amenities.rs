@@ -2,7 +2,7 @@ use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::coordinate_system::cartesian::XZPoint;
-use crate::deterministic_rng::element_rng;
+use crate::deterministic_rng::{coord_rng, element_rng};
 use crate::element_processing::get_nearest_road_block;
 use crate::element_processing::surfaces::{get_blocks_for_surface, semirandom_surface};
 use crate::floodfill_cache::{FloodFillCache, RoadMaskBitmap};
@@ -52,7 +52,14 @@ pub fn generate_amenities(
                 }
 
                 if let Some(pt) = first_node {
-                    let mut rng = rand::rng();
+                    // Shared source and master anchor keep inventory and fallback displays
+                    // identical across repeated and translated external slices.
+                    let mut rng: Box<dyn rand::RngCore> = if editor.master_geometry().is_some() {
+                        let (x, z) = editor.master_coordinates(pt.x, pt.z);
+                        Box::new(coord_rng(x, z, element.id()))
+                    } else {
+                        Box::new(rand::rng())
+                    };
                     let loot_pool = build_recycling_loot_pool(element.tags());
                     let items = build_recycling_items(&loot_pool, &mut rng);
 
@@ -82,6 +89,7 @@ pub fn generate_amenities(
                                     absolute_y,
                                     pt.z,
                                     display_item,
+                                    &mut rng,
                                 );
                             }
                         }
@@ -675,15 +683,21 @@ fn place_item_frame_on_random_side(
     barrel_absolute_y: i32,
     z: i32,
     item: HashMap<String, Value>,
+    rng: &mut impl Rng,
 ) {
-    let mut rng = rand::rng();
+    let master = editor.master_geometry();
     let mut directions = [
         ((0, 0, -1), 2), // North
         ((0, 0, 1), 3),  // South
         ((-1, 0, 0), 4), // West
         ((1, 0, 0), 5),  // East
     ];
-    directions.shuffle(&mut rng);
+    if master.is_some() {
+        directions.shuffle(rng);
+    } else {
+        // Preserve the stock side-selection stream independently of inventory.
+        directions.shuffle(&mut rand::rng());
+    }
 
     let (min_x, min_z) = editor.get_min_coords();
     let (max_x, max_z) = editor.get_max_coords();
@@ -693,7 +707,14 @@ fn place_item_frame_on_random_side(
         .find(|((dx, _dy, dz), _)| {
             let target_x = x + dx;
             let target_z = z + dz;
-            target_x >= min_x && target_x <= max_x && target_z >= min_z && target_z <= max_z
+            if let Some(frame) = &master {
+                frame.bounds.contains(&XZPoint::new(
+                    target_x + frame.offset.0,
+                    target_z + frame.offset.1,
+                ))
+            } else {
+                target_x >= min_x && target_x <= max_x && target_z >= min_z && target_z <= max_z
+            }
         })
         .unwrap_or(((0, 0, 1), 3)); // Fallback south if all directions are out of bounds
 
@@ -720,6 +741,19 @@ fn place_item_frame_on_random_side(
     extra.insert("TileY".to_string(), Value::Int(target_y));
     extra.insert("TileZ".to_string(), Value::Int(target_z));
     extra.insert("Fixed".to_string(), Value::Byte(1));
+    if master.is_some() {
+        let (master_x, master_z) = editor.master_coordinates(target_x, target_z);
+        extra.insert(
+            "UUID".to_string(),
+            Value::IntArray(crate::world_editor::build_deterministic_uuid(
+                "minecraft:item_frame",
+                master_x,
+                target_y,
+                master_z,
+                facing as i64,
+            )),
+        );
+    }
 
     let relative_y = target_y - ground_y;
     editor.add_entity(
@@ -937,4 +971,239 @@ fn make_basic_item(id: &str, slot: i8, count: i8) -> HashMap<String, Value> {
 
 fn tag_enabled(tags: &HashMap<String, String>, key: &str) -> bool {
     tags.get(key).is_some_and(|value| value == "yes")
+}
+
+#[cfg(test)]
+mod recycling_master_tests {
+    use super::*;
+    use crate::coordinate_system::cartesian::XZBBox;
+    use crate::osm_parser::ProcessedNode;
+    use clap::Parser;
+
+    fn render(
+        offset: (u32, u32),
+        size: (i32, i32),
+        anchors: &[(i32, i32)],
+        master: bool,
+    ) -> Vec<Value> {
+        render_category(offset, size, anchors, master, "glass_bottles")
+    }
+
+    fn render_category(
+        offset: (u32, u32),
+        size: (i32, i32),
+        anchors: &[(i32, i32)],
+        master: bool,
+        category: &str,
+    ) -> Vec<Value> {
+        let bounds = XZBBox::rect_from_min_max(0, 0, size.0 - 1, size.1 - 1).unwrap();
+        let mut editor = if master {
+            crate::world_editor::translated_pattern_test_editor(&bounds, offset)
+        } else {
+            crate::element_processing::building_test_support::test_editor(&bounds)
+        };
+        let args = Args::parse_from(["arnis", "--mode", "geo-terrain"]);
+        let cache = FloodFillCache::precompute(&[], None);
+        for &(x, z) in anchors {
+            let element = ProcessedElement::Node(ProcessedNode {
+                id: 11383007966 + (x * 128 + z) as u64,
+                x: x - offset.0 as i32,
+                z: z - offset.1 as i32,
+                tags: HashMap::from([
+                    ("amenity".into(), "recycling".into()),
+                    ("recycling_type".into(), "container".into()),
+                ])
+                .into_iter()
+                .chain(
+                    category
+                        .split(',')
+                        .map(|category| (format!("recycling:{category}"), "yes".into())),
+                )
+                .collect(),
+            });
+            generate_amenities(
+                &mut editor,
+                &element,
+                &args,
+                &cache,
+                &RoadMaskBitmap::new_empty(),
+            );
+        }
+        let mut output = Vec::new();
+        for region in editor.into_world().regions.into_values() {
+            for chunk in region.chunks.into_values() {
+                for key in ["block_entities", "entities"] {
+                    if let Some(Value::List(values)) = chunk.other.get(key) {
+                        for value in values {
+                            let Value::Compound(mut value) = value.clone() else {
+                                panic!()
+                            };
+                            for (key, delta) in [
+                                ("x", offset.0),
+                                ("z", offset.1),
+                                ("TileX", offset.0),
+                                ("TileZ", offset.1),
+                            ] {
+                                if let Some(Value::Int(v)) = value.get_mut(key) {
+                                    *v += delta as i32;
+                                }
+                            }
+                            if let Some(Value::List(pos)) = value.get_mut("Pos") {
+                                for (i, delta) in [(0, offset.0), (2, offset.1)] {
+                                    if let Value::Double(v) = &mut pos[i] {
+                                        *v += delta as f64;
+                                    }
+                                }
+                            }
+                            if let Some(Value::List(pos)) = value.get_mut("block_pos") {
+                                for (i, delta) in [(0, offset.0), (2, offset.1)] {
+                                    if let Value::Int(v) = &mut pos[i] {
+                                        *v += delta as i32;
+                                    }
+                                }
+                            }
+                            output.push(Value::Compound(value));
+                        }
+                    }
+                }
+            }
+        }
+        output.sort_by_key(|v| {
+            let Value::Compound(v) = v else {
+                unreachable!()
+            };
+            let coord = |key| match v.get(key) {
+                Some(Value::Int(v)) => *v,
+                _ => -1,
+            };
+            (coord("x"), coord("z"), coord("TileX"), coord("TileZ"))
+        });
+        output
+    }
+
+    #[test]
+    fn recycling_master_repeat() {
+        let anchors = [(40, 50), (60, 70), (30, 32)];
+        assert_eq!(
+            render((0, 0), (128, 128), &anchors, true),
+            render((0, 0), (128, 128), &anchors, true)
+        );
+    }
+
+    #[test]
+    fn recycling_master_translated() {
+        let anchors = [(40, 50), (60, 70), (30, 32)];
+        assert_eq!(
+            render((0, 0), (128, 128), &anchors, true),
+            render((17, 29), (100, 99), &anchors, true)
+        );
+    }
+
+    #[test]
+    fn recycling_master_owned_boundary() {
+        // Both windows see the same source geometry, including adjacent outside anchors.
+        let mut crossed_owner = false;
+        for anchor in [(0, 0), (127, 127)]
+            .into_iter()
+            .chain((10..30).flat_map(|z| [(63, z), (64, z)]))
+        {
+            let whole = render((0, 0), (128, 128), &[anchor], true);
+            crossed_owner |= whole.iter().any(|value| {
+                let Value::Compound(value) = value else {
+                    return false;
+                };
+                matches!(value.get("TileX"), Some(Value::Int(x)) if (*x < 64) != (anchor.0 < 64))
+            });
+            let mut tiled = render((0, 0), (64, 128), &[anchor], true);
+            tiled.extend(render((64, 0), (64, 128), &[anchor], true));
+            assert_eq!(
+                whole.len(),
+                tiled.len(),
+                "ownership changed output count for {anchor:?}"
+            );
+            assert!(
+                whole.iter().all(|v| tiled.contains(v)),
+                "ownership changed payload for {anchor:?}"
+            );
+        }
+        assert!(
+            crossed_owner,
+            "fixture must place a frame inside a different owner from its anchor"
+        );
+    }
+
+    #[test]
+    fn recycling_master_mixed_inventory_repeat_and_translate() {
+        let categories = "glass_bottles,cans,green_waste,paper";
+        let anchors = [(40, 50), (60, 70), (30, 32)];
+        let whole = render_category((0, 0), (128, 128), &anchors, true, categories);
+        assert_eq!(
+            whole.len(),
+            anchors.len(),
+            "mixed recycling must only emit barrels"
+        );
+        for value in &whole {
+            let Value::Compound(value) = value else {
+                panic!()
+            };
+            assert_eq!(
+                value.get("id"),
+                Some(&Value::String("minecraft:barrel".into()))
+            );
+            assert!(matches!(value.get("Items"), Some(Value::List(items)) if !items.is_empty()));
+        }
+        assert_eq!(
+            whole,
+            render_category((0, 0), (128, 128), &anchors, true, categories)
+        );
+        assert_eq!(
+            whole,
+            render_category((17, 29), (100, 99), &anchors, true, categories)
+        );
+    }
+
+    #[test]
+    fn recycling_master_all_display_categories_repeat_and_translate() {
+        for category in [
+            "glass_bottles",
+            "paper",
+            "glass",
+            "clothes",
+            "cans",
+            "shoes",
+            "scrap_metal",
+            "green_waste",
+        ] {
+            let whole = render_category((0, 0), (128, 128), &[(40, 50)], true, category);
+            assert_eq!(whole.len(), 2, "missing display for {category}");
+            assert_eq!(
+                whole,
+                render_category((0, 0), (128, 128), &[(40, 50)], true, category)
+            );
+            assert_eq!(
+                whole,
+                render_category((17, 29), (100, 99), &[(40, 50)], true, category)
+            );
+        }
+    }
+
+    #[test]
+    fn recycling_stock_retains_inventory_and_display() {
+        let output = render((0, 0), (128, 128), &[(40, 50)], false);
+        assert_eq!(output.len(), 2);
+        for value in output {
+            let Value::Compound(value) = value else {
+                panic!()
+            };
+            if value.get("id") == Some(&Value::String("minecraft:barrel".into())) {
+                assert!(matches!(value.get("Items"), Some(Value::List(_))));
+            } else {
+                assert_eq!(
+                    value.get("id"),
+                    Some(&Value::String("minecraft:item_frame".into()))
+                );
+                assert!(matches!(value.get("Item"), Some(Value::Compound(_))));
+            }
+        }
+    }
 }

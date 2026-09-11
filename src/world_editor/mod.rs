@@ -2188,7 +2188,7 @@ impl<'a> WorldEditor<'a> {
 }
 
 #[allow(dead_code)]
-fn build_deterministic_uuid(id: &str, x: i32, y: i32, z: i32, face: i64) -> IntArray {
+pub(crate) fn build_deterministic_uuid(id: &str, x: i32, y: i32, z: i32, face: i64) -> IntArray {
     let mut hash: i64 = 17;
     for byte in id.bytes() {
         hash = hash.wrapping_mul(31).wrapping_add(byte as i64);
