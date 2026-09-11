@@ -420,6 +420,19 @@ pub(crate) struct AdmittedSources {
     pub entries: Vec<SourceEntry>,
 }
 
+/// Strict provider bytes, supplied either by authenticated files or bounded capture.
+pub(crate) trait SourceResponseReader {
+    fn resolve(&self, kind: &str, key: &str, max_bytes: u64) -> Result<Vec<u8>, String>;
+    fn checkpoint(&self) -> Result<(), String> {
+        Ok(())
+    }
+}
+impl SourceResponseReader for AdmittedSources {
+    fn resolve(&self, kind: &str, key: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
+        AdmittedSources::resolve(self, kind, key, max_bytes)
+    }
+}
+
 impl AdmittedSources {
     /// Read only a bounded response, then authenticate the exact buffer consumed.
     pub(crate) fn resolve(&self, kind: &str, key: &str, max_bytes: u64) -> Result<Vec<u8>, String> {
