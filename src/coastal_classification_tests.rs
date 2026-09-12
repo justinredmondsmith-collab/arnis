@@ -68,6 +68,18 @@ fn coastal_producer_serializes_verified_ocean_and_rejects_bad_envelopes() {
     let ocean = ocean_document(bbox);
     let d = inputs(&ocean, &serde_json::json!({"elements":[]}));
     run_fixture(&d, bbox).unwrap();
+    let policy: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(d.path().join("result/water-classification.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(policy["policy"], "master-coastal-water-v2");
+    let profile: serde_json::Value =
+        serde_json::from_str(include_str!("../docs/contracts/tiler-profile.json")).unwrap();
+    assert_eq!(profile["coastal_policy"], "master-coastal-water-v2");
+    assert_eq!(
+        profile["coastal_dem_corroboration"],
+        "complete-osm-water-ocean-intersection-v1"
+    );
     let report: serde_json::Value = serde_json::from_slice(
         &std::fs::read(d.path().join("result/classification.json")).unwrap(),
     )

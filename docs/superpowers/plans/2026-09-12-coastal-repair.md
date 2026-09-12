@@ -66,3 +66,21 @@ Independent plan review: approved for diagnostics only, with real ESA sampling, 
 The immutable failure replay reproduced the original guard exactly. Existing focused tests: 39 passed. Reviewed opt-in characterization: 1 passed in 118.94 seconds, using four threads and unchanged production sampling/repair functions; initial slow serial attempt was stopped and retained separately. Formatter and diff checks passed. No runtime fix is claimed.
 
 Measured ocean samples: 88,450. Above +2m: 11,430 raw, 11,550 after outlier filtering, unchanged by anomaly repair/NaN fill. Maximum conflict 15.310985329501783m. No nonfinite ocean samples. Dry classification candidates: 95,873, not evidence of a preserved output world. Raw/repaired grids and actual ESA classes are preserved in compressed evidence. The worst-point OSM probe found a nearby coastline way, but is not a complete relation/structure audit; authoritative geometry versus source elevation remains a diagnosis question. Task 2 must resolve that question before selecting a success regression or policy revision.
+
+## Refined runtime checkpoint
+
+Complete source audit selects versioned alternative B. The refined spec defines
+v2 authenticated ocean + complete OSM water/bay intersection, with conservative
+mapped-boundary exclusion and member-way suppression for valid/invalid relations.
+Independent design and native spec reviews found no remaining blockers after the
+member-hole and mandatory-source clarifications. Parent code-quality review
+confirmed strict source loading and no tile-local logic; a new test-only clippy
+warning was corrected. App adapter has independent spec and quality approval.
+
+New behavioral tests were observed red, then passed. An opt-in native geometry
+check authenticates the old source bytes and corroborates all 11,550 retained
+conflicts without relabeling or admitting the historical bundle as v2. Complete
+headless run: 821 passed, one existing online test blocked by sandbox networking,
+10 ignored; that sole online test passed when rerun with host network access.
+Actual export, final-world comparisons and app delivery remain pending; unit and
+geometry success is not a claim that the user's build is fixed yet.
