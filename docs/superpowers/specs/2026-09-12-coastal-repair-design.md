@@ -44,3 +44,20 @@ holes, dry cliffs, inland water, and whole-versus-tiled final output. Replay the
 original bbox and verify Java 1.20.1 conversion and initial/respawn metadata
 before replacing the installed app. Independent design and code reviews remain
 required. No Minecraft runtime launch; user performs that test.
+
+## Qualification finding: nested renderer partitions
+
+The first real whole/sliced comparison fails on 1,423 vegetation/overlap blocks
+in 153 chunks; terrain, biome cells and other NBT match. Every changed chunk is
+within the 64-block halo at internal 512-block region boundaries. Whole714x576
+uses four internal native tiles; external384 slices use the sequential path.
+Internal merging preserves halo nonair where an authoritative tile has air.
+
+Refined narrow correction, independently red-teamed: external master tiles must
+use the sequential region writer; the app already owns partitioning and halo
+assembly. Add the external-tile exclusion to internal parallel-path selection.
+Do not change stock Arnis merge semantics or ordinary internal streaming. Test
+actual generation before patching, then require zero real block/biome/NBT
+mismatches. This also disables native streaming eviction for external tiles, so
+record measured real-fixture memory; admitted4064/8GB limits do not prove maximum
+size safety. Keep the failed comparison and initial candidate immutable.
