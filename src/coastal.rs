@@ -598,3 +598,7 @@ impl CoastalProtection {
         lc.invalidate_water_blend_grid();
     }
 }
+
+#[cfg(test)]
+#[path = "coastal_diagnostic_tests.rs"]
+mod diagnostics;
