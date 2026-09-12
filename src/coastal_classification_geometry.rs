@@ -130,7 +130,7 @@ pub(crate) fn document(
         )
     };
     checkpoint()?;
-    let bytes=serde_json::to_vec(&serde_json::json!({"schema_version":1,"policy":"master-coastal-water-v1","bbox":frame.bbox,"default_classification":"inland","sources":[{"kind":"osm","key":"master-osm"},{"kind":"coastal_geometry","key":crate::coastal_geometry::KEY}],"coastal_domains":domains})).map_err(|e|e.to_string())?;
+    let bytes=serde_json::to_vec(&serde_json::json!({"schema_version":1,"policy":"master-coastal-water-v2","bbox":frame.bbox,"default_classification":"inland","sources":[{"kind":"osm","key":"master-osm"},{"kind":"coastal_geometry","key":crate::coastal_geometry::KEY}],"coastal_domains":domains})).map_err(|e|e.to_string())?;
     if bytes.len() > 16777216 {
         return Err("coastal_capacity: classification exceeds 16 MiB".into());
     }

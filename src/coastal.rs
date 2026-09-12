@@ -251,7 +251,10 @@ struct Domain {
     water: MultiPolygon,
     inland: MultiPolygon,
 }
+#[path = "coastal_corroboration.rs"]
+mod corroboration;
 pub(crate) struct CoastalPolicy {
+    corroboration: Option<corroboration::Corroboration>,
     domains: Vec<Domain>,
     frame: Option<crate::coastal_geometry::Frame>,
 }
@@ -350,7 +353,9 @@ impl CoastalPolicy {
             .collect();
         let mut policy = Self::parse(&bytes, bbox, &refs).map_err(error)?;
         let doc: Document = serde_json::from_slice(&bytes).map_err(|e| error(e.to_string()))?;
-        if sources.entries.iter().any(|s| s.kind == "coastal_geometry") {
+        if doc.policy == "master-coastal-water-v2"
+            || sources.entries.iter().any(|s| s.kind == "coastal_geometry")
+        {
             if !doc
                 .sources
                 .iter()
@@ -371,7 +376,15 @@ impl CoastalPolicy {
                     crate::coastal_geometry::MAX_BYTES,
                 )
                 .map_err(error)?;
-            let (frame, _) = crate::coastal_geometry::parse(&geometry, *bbox).map_err(error)?;
+            let (frame, ocean) = crate::coastal_geometry::parse(&geometry, *bbox).map_err(error)?;
+            if doc.policy == "master-coastal-water-v2" {
+                let osm = sources
+                    .resolve("osm", "master-osm", 536_870_912)
+                    .map_err(error)?;
+                policy.corroboration = Some(
+                    corroboration::Corroboration::from_authenticated(&osm, ocean).map_err(error)?,
+                );
+            }
             policy.frame = Some(frame);
         }
         Ok(policy)
@@ -387,7 +400,10 @@ impl CoastalPolicy {
         let doc: Document = serde_json::from_slice(bytes)
             .map_err(|e| format!("Invalid coastal classification: {e}"))?;
         if doc.schema_version != 1
-            || doc.policy != "master-coastal-water-v1"
+            || !matches!(
+                doc.policy.as_str(),
+                "master-coastal-water-v1" | "master-coastal-water-v2"
+            )
             || doc.default_classification != "inland"
             || doc.bbox != *bbox
             || !bbox.iter().all(|v| v.is_finite())
@@ -438,6 +454,7 @@ impl CoastalPolicy {
         Ok(Self {
             domains,
             frame: None,
+            corroboration: None,
         })
     }
     /// Verify only the bound master lattice; do not expose continuous classification.
@@ -529,7 +546,13 @@ impl CoastalPolicy {
                 if class != 0 && !h.is_finite() {
                     return Err(format!("Nonfinite coastal DEM at lon={lon}, lat={lat}"));
                 }
-                if class == 2 && h > 2.0 {
+                if class == 2
+                    && h > 2.0
+                    && !self
+                        .corroboration
+                        .as_ref()
+                        .is_some_and(|c| c.covers(lon, lat))
+                {
                     return Err(format!("Coastal wet DEM conflict at lon={lon}, lat={lat}: repaired DEM {h}m exceeds +2.0m above sea level"));
                 }
                 classes.push(match class {
@@ -598,3 +621,11 @@ impl CoastalProtection {
         lc.invalidate_water_blend_grid();
     }
 }
+
+#[cfg(test)]
+#[path = "coastal_diagnostic_tests.rs"]
+mod diagnostics;
+
+#[cfg(test)]
+#[path = "coastal_v2_tests.rs"]
+mod v2_tests;

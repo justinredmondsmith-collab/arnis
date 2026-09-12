@@ -779,7 +779,11 @@ pub fn generate_world_with_options(
     // format-dependent block-entity schema (banners) only matches Java output.
     // Restrict the parallel tile path to Java; Bedrock/Luanti large worlds use
     // the sequential path (correct, just not tile-parallel).
-    let use_parallel_tiles = tiles.len() >= 3 && matches!(world_format, WorldFormat::JavaAnvil);
+    // External slices already have one admitted master frame and app-owned work bounds.
+    // Internal region halos retain OSM vegetation where strict ground cleanup wrote AIR,
+    // so nesting them would make output depend on whether a slice spans three regions.
+    let use_parallel_tiles =
+        !external_tile && tiles.len() >= 3 && matches!(world_format, WorldFormat::JavaAnvil);
 
     if use_parallel_tiles {
         // Large area: process tiles in parallel using rayon.
@@ -2019,3 +2023,7 @@ mod tiler_output_tests {
             .is_some());
     }
 }
+
+#[cfg(test)]
+#[path = "external_tiling_tests.rs"]
+mod external_tiling_tests;
