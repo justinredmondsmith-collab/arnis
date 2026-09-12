@@ -640,31 +640,40 @@ pub fn generate_world_with_options(
     // Nested areas render correctly only if the smallest one writes last.
     sort_ground_fill_areas(&mut elements);
 
+    // Whole-feature choices (area size, facade selection and sibling context)
+    // must see the same admitted master extent in every external slice. This
+    // replaces the local cache; it does not allocate a second full fill cache.
+    let decision_bounds = ground
+        .master_geometry()
+        .map_or_else(|| xzbbox.clone(), |master| master.local_bounds());
+
     // Pre-compute all flood fills in parallel for better CPU utilization
     let mut flood_fill_cache = match ground.master_geometry() {
         Some(master) => FloodFillCache::precompute_master(
             &elements,
             args.timeout.as_ref(),
             master,
-            xzbbox.clone(),
+            decision_bounds.clone(),
         ),
         None => FloodFillCache::precompute(&elements, args.timeout.as_ref()),
     };
 
     // Collect building footprints to prevent trees from spawning inside buildings
     // Uses a memory-efficient bitmap (~1 bit per coordinate) instead of a HashSet (~24 bytes per coordinate)
-    let building_footprints = flood_fill_cache.collect_building_footprints(&elements, &xzbbox);
+    let building_footprints =
+        flood_fill_cache.collect_building_footprints(&elements, &decision_bounds);
 
     // Collect coordinates covered by tunnel=building_passage highways so that
     // building generation can cut ground-level openings through walls and floors.
     let building_passages =
-        highways::collect_building_passage_coords(&elements, &xzbbox, args.scale);
+        highways::collect_building_passage_coords(&elements, &decision_bounds, args.scale);
 
     // Pre-build a bitmap of every (x, z) block coordinate covered by a rendered
     // road or path surface. Uses the same Bresenham + block_range geometry as
     // generate_highways_internal, so the bitmap is a 1:1 match of what gets placed.
     // Amenity processors use this for O(1) nearest-road-block lookups.
-    let road_mask = highways::collect_road_surface_coords(&elements, &editor, &xzbbox, args.scale);
+    let road_mask =
+        highways::collect_road_surface_coords(&elements, &editor, &decision_bounds, args.scale);
 
     // Sibling index keyed on the hint-free seed: parts of one building can
     // carry different packed style-hint bits and must still find each other.
@@ -1506,6 +1515,216 @@ fn generate_fillground_ores(
 mod tests {
     use super::*;
     use crate::osm_parser::ProcessedMember;
+
+    #[test]
+    fn master_area_order_retains_remote_area_slots_before_local_fence() {
+        use crate::coordinate_system::transformation::CoordTransformer;
+        use crate::osm_parser::{parse_osm_data_with_frame, OsmData};
+        let bbox = LLBBox::new(0.0, 0.0, 1.0, 1.0).unwrap();
+        let mut raw = Vec::new();
+        for (id, points, tags) in [
+            (
+                1_u64,
+                vec![(2, 2), (10, 2), (10, 10), (2, 10), (2, 2)],
+                serde_json::json!({"landuse":"grass"}),
+            ),
+            (
+                2,
+                vec![(5, 2), (5, 10)],
+                serde_json::json!({"barrier":"fence"}),
+            ),
+            (
+                3,
+                vec![(64, 0), (127, 0), (127, 63), (64, 63), (64, 0)],
+                serde_json::json!({"leisure":"park"}),
+            ),
+        ] {
+            let mut refs = Vec::new();
+            for (i, (x, z)) in points.iter().enumerate() {
+                let node_id = id * 100 + i as u64;
+                refs.push(node_id);
+                raw.push(serde_json::json!({"type":"node","id":node_id,"lon":*x as f64 / 127.0,"lat":1.0 - *z as f64 / 127.0}));
+            }
+            raw.push(serde_json::json!({"type":"way","id":id,"nodes":refs,"tags":tags}));
+        }
+        let mut orders = Vec::new();
+        for (width, height) in [(128, 128), (16, 32)] {
+            let (frame, bounds) =
+                CoordTransformer::for_master_slice(&bbox, 128, 128, 0, 0, width, height).unwrap();
+            let osm: OsmData = serde_json::from_value(serde_json::json!({"elements":raw})).unwrap();
+            let (mut elements, _, _, _) = parse_osm_data_with_frame(osm, bbox, 1.0, frame, bounds);
+            sort_ground_fill_areas(&mut elements);
+            orders.push(
+                elements
+                    .iter()
+                    .filter(|e| [1, 2].contains(&e.id()))
+                    .map(|e| e.id())
+                    .collect::<Vec<_>>(),
+            );
+        }
+        assert_eq!(
+            orders[0],
+            vec![2, 1],
+            "whole master keeps the fence before the small grass area"
+        );
+        assert_eq!(
+            orders[0], orders[1],
+            "remote larger area must not move local grass across its fence"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires the retained external Bowling Green source fixture"]
+    fn real_master_order_is_stable_under_tile_selection() {
+        use crate::coordinate_system::transformation::CoordTransformer;
+        use crate::osm_parser::{parse_osm_data_with_frame, OsmData};
+        let source = std::fs::read(std::env::var("ARNIS_TEST_REAL_OSM").unwrap()).unwrap();
+        let bbox = LLBBox::new(40.7043, -74.0145, 40.7058, -74.0126).unwrap();
+        let mut records = Vec::new();
+        let mut orders = Vec::new();
+        for (label, col, row, width, height) in [
+            ("whole", 0, 0, 161, 167),
+            ("park64", 48, 48, 96, 96),
+            ("southwest64", 0, 112, 80, 55),
+            ("south64", 48, 112, 96, 55),
+            ("east64", 112, 48, 49, 96),
+        ] {
+            let (frame, bounds) =
+                CoordTransformer::for_master_slice(&bbox, 161, 167, col, row, width, height)
+                    .unwrap();
+            let raw: OsmData = serde_json::from_slice(&source).unwrap();
+            let (mut elements, _, _, _) = parse_osm_data_with_frame(raw, bbox, 1.0, frame, bounds);
+            let before: Vec<_> = elements
+                .iter()
+                .map(|e| (e.id(), e.tags().clone()))
+                .collect();
+            sort_ground_fill_areas(&mut elements);
+            let after: Vec<_> = elements.iter().map(|e| e.id()).collect();
+            records.push(serde_json::json!({"label": label, "before": before, "after": after}));
+            orders.push(after);
+        }
+        if let Ok(path) = std::env::var("ARNIS_TEST_ORDER_REPORT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&records).unwrap()).unwrap();
+        }
+        for (index, tile) in orders.iter().enumerate().skip(1) {
+            let ids: std::collections::HashSet<_> = tile.iter().copied().collect();
+            let expected: Vec<_> = orders[0]
+                .iter()
+                .filter(|id| ids.contains(id))
+                .copied()
+                .collect();
+            assert_eq!(
+                &expected, tile,
+                "master common-feature order differs in slice {index}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires retained external Bowling Green source and master fixtures"]
+    fn real_master_facade_is_stable_under_tile_selection() {
+        use crate::coordinate_system::transformation::CoordTransformer;
+        use crate::element_processing::building_facade::{compute_facade_plan, BuildingContext};
+        use crate::osm_parser::{parse_osm_data_with_frame, seed_without_hint, OsmData};
+        let source = std::fs::read(std::env::var("ARNIS_TEST_REAL_OSM").unwrap()).unwrap();
+        let grid = PathBuf::from(std::env::var("ARNIS_TEST_REAL_GRID").unwrap());
+        let bbox = LLBBox::new(40.7043, -74.0145, 40.7058, -74.0126).unwrap();
+        let mut records = Vec::new();
+        let mut plans = Vec::new();
+        for (label, col, row, width, height) in [
+            ("whole", 0, 0, 161, 167),
+            ("southwest64", 0, 112, 80, 55),
+            ("south64", 48, 112, 96, 55),
+            ("east64", 112, 48, 49, 96),
+        ] {
+            let (frame, bounds) =
+                CoordTransformer::for_master_slice(&bbox, 161, 167, col, row, width, height)
+                    .unwrap();
+            let raw: OsmData = serde_json::from_slice(&source).unwrap();
+            let (mut elements, _, _, part_groups) =
+                parse_osm_data_with_frame(raw, bbox, 1.0, frame, bounds.clone());
+            sort_ground_fill_areas(&mut elements);
+            let ground = Ground::from_master_slice(
+                crate::elevation::master_grid::load_slice(&grid, col, row, width, height).unwrap(),
+            )
+            .unwrap();
+            let decision_bounds = ground.master_geometry().unwrap().local_bounds();
+            let cache = FloodFillCache::precompute_master(
+                &elements,
+                None,
+                ground.master_geometry().unwrap(),
+                decision_bounds.clone(),
+            );
+            let footprints = cache.collect_building_footprints(&elements, &decision_bounds);
+            let passages =
+                highways::collect_building_passage_coords(&elements, &decision_bounds, 1.0);
+            let mut editor = WorldEditor::new(PathBuf::from("/dev/null/unused"), &bounds, bbox);
+            editor.set_ground(Arc::new(ground));
+            let roads =
+                highways::collect_road_surface_coords(&elements, &editor, &decision_bounds, 1.0);
+            let mut groups: FnvHashMap<u64, Vec<u64>> = FnvHashMap::default();
+            for (&id, &seed) in &part_groups {
+                groups.entry(seed_without_hint(seed)).or_default().push(id);
+            }
+            groups.retain(|_, members| members.len() >= 2);
+            for members in groups.values_mut() {
+                members.sort_unstable();
+            }
+            let ctx = BuildingContext {
+                flood_fill_cache: &cache,
+                building_passages: &passages,
+                road_mask: &roads,
+                building_footprints: &footprints,
+                group_members: &groups,
+            };
+            for element in &elements {
+                let ProcessedElement::Way(way) = element else {
+                    continue;
+                };
+                if ![1002205137, 213924949, 213924950].contains(&way.id) {
+                    continue;
+                }
+                let Some(fill) = cache.get_cached(way.id) else {
+                    continue;
+                };
+                let mut own: fnv::FnvHashSet<_> = fill.iter().copied().collect();
+                if let Some(&seed) = part_groups.get(&way.id) {
+                    if let Some(members) = groups.get(&seed_without_hint(seed)) {
+                        for id in members {
+                            if let Some(other) = cache.get_cached(*id) {
+                                own.extend(other.iter().copied());
+                            }
+                        }
+                    }
+                }
+                let plan = compute_facade_plan(way, &ctx, 1.0, &own);
+                let normalized = serde_json::json!({
+                    "id": way.id, "front": plan.front_segment, "has_street": plan.has_any_street,
+                    "corner": plan.corner.as_ref().map(|c| (c.vertex.0 + col as i32, c.vertex.1 + row as i32, c.seg_a, c.seg_b)),
+                    "segments": plan.segments.iter().map(|s| s.as_ref().map(|s| (format!("{:?}",s.class),s.road_dist,s.normal,s.tangent,s.len))).collect::<Vec<_>>(),
+                });
+                records.push(serde_json::json!({"label": label, "cached_fill_count": fill.len(), "own_count": own.len(), "plan": normalized}));
+                plans.push((label, way.id, normalized));
+            }
+        }
+        if let Ok(path) = std::env::var("ARNIS_TEST_FACADE_REPORT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&records).unwrap()).unwrap();
+        }
+        for (label, id, plan) in &plans {
+            if *label == "whole" {
+                continue;
+            }
+            let reference = &plans
+                .iter()
+                .find(|(l, i, _)| *l == "whole" && i == id)
+                .unwrap()
+                .2;
+            assert_eq!(
+                reference, plan,
+                "facade decision differs for {id} in {label}"
+            );
+        }
+    }
 
     #[test]
     fn no_ores_preserves_stone_in_region_and_merged_passes() {
