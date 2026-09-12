@@ -844,6 +844,16 @@ fn parse_osm_data_inner(
         println!("Scale factor Z: {}", coord_transformer.scale_factor_z());
     }
 
+    // Keep the same master element sequence and context for every external slice.
+    // Filtering before area ordering changes first-writer precedence around non-area
+    // elements. Raster writers retain their original local output bounds.
+    let master_geometry = coord_transformer
+        .master_bounds_and_offset()
+        .map(|(bounds, offset)| crate::clipping::MasterGeometry { bounds, offset });
+    let selection_bounds = master_geometry
+        .as_ref()
+        .map_or_else(|| xzbbox.clone(), |m| m.local_bounds());
+
     let mut part_groups = PartGroups::new();
     let mut outline_suppression =
         compute_outline_suppression(&data.relations, &data.ways, &data.nodes, &mut part_groups);
@@ -913,7 +923,7 @@ fn parse_osm_data_inner(
 
             // Only add tagged nodes to processed_elements if they're within or near the bbox
             // This significantly improves performance by filtering out distant nodes
-            if !processed.tags.is_empty() && xzbbox.contains(&xzpoint) {
+            if !processed.tags.is_empty() && selection_bounds.contains(&xzpoint) {
                 processed_elements.push(ProcessedElement::Node(processed));
             }
         }
@@ -959,37 +969,15 @@ fn parse_osm_data_inner(
         });
         ways_map.insert(element.id, Arc::clone(&way));
 
-        // Clip way nodes for standalone way processing (not relations)
-        let clipped_nodes = clip_way_to_bbox(&way.nodes, &xzbbox);
-
-        // Skip ways that are completely outside the bbox (empty after clipping)
-        if clipped_nodes.is_empty() {
+        // Clip once in master space for external slices, including open barriers
+        // and other line features. Stock parsing keeps its original local clipping.
+        let nodes = match &master_geometry {
+            Some(master) => master.clip_way(&way.nodes),
+            None => clip_way_to_bbox(&way.nodes, &xzbbox),
+        };
+        if nodes.is_empty() {
             continue;
         }
-
-        // Keep line phase and polygon membership in one shared master geometry.
-        // Tile clipping is selection only; clipping rounded vertices a second time
-        // would change interior lattice cells. Raster consumers crop their output.
-        // Master clipping also bounds retained line work to the admitted extent.
-        let nodes = if (way.tags.contains_key("highway")
-            && way.tags.get("area").map(String::as_str) != Some("yes"))
-            || way.tags.contains_key("railway")
-            || (way.nodes.len() >= 4
-                && way.nodes.first().map(|n| (n.x, n.z)) == way.nodes.last().map(|n| (n.x, n.z)))
-        {
-            if let Some((master_bounds, (col, row))) = coord_transformer.master_bounds_and_offset()
-            {
-                crate::clipping::MasterGeometry {
-                    bounds: master_bounds,
-                    offset: (col, row),
-                }
-                .clip_way(&way.nodes)
-            } else {
-                clipped_nodes
-            }
-        } else {
-            clipped_nodes
-        };
         let processed: ProcessedWay = ProcessedWay {
             id: element.id,
             tags: way.tags.clone(),

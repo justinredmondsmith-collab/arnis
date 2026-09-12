@@ -15,6 +15,18 @@ pub(crate) struct MasterGeometry {
 }
 
 impl MasterGeometry {
+    /// Full admitted decision extent in this render's translated coordinate frame.
+    /// The editor still owns only its original local write window.
+    pub(crate) fn local_bounds(&self) -> XZBBox {
+        XZBBox::rect_from_min_max(
+            self.bounds.min_x() - self.offset.0,
+            self.bounds.min_z() - self.offset.1,
+            self.bounds.max_x() - self.offset.0,
+            self.bounds.max_z() - self.offset.1,
+        )
+        .expect("admitted master bounds and offset")
+    }
+
     fn translated(&self, nodes: &[ProcessedNode]) -> Vec<ProcessedNode> {
         nodes
             .iter()
